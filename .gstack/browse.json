@@ -1,0 +1,9 @@
+{
+  "pid": 25273,
+  "port": 15689,
+  "token": "2ddafd23-6048-4892-99de-9a6f44911ec1",
+  "startedAt": "2026-08-15T16:27:59.703Z",
+  "serverPath": "/Users/khoivo/.claude/skills/gstack/browse/src/server.ts",
+  "mode": "launched",
+  "configHash": "303a7eeccc03078b"
+}

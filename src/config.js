@@ -1,0 +1,70 @@
+// config.js — every tunable number in ONE place.
+// Each constant's derivation lives in TIMINGS.md (same key names).
+
+export const CONFIG = {
+  // simulation clock
+  dt: 0.1,              // s of sim time per physics step
+  timeScale: 30,        // sim seconds per wall second (slider 1–120)
+  startHour: 6.0,       // sim starts 06:00
+
+  // road physics
+  satFlowPerLane: 0.6,  // veh/s/lane discharge on green (motorbike-adjusted; car-only ≈0.5)
+  lanes: 2,             // per direction, all roads
+  vehicleLength: 7,     // m of road one queued vehicle occupies
+  speedKmh: 40,         // free-flow link speed
+  evSpeedKmh: 50,       // priority vehicle speed (traffic parts)
+
+  // signal timing (derived in TIMINGS.md)
+  yellow: 3,            // s — ITE kinematic formula @40km/h
+  allRed: 2,            // s — intersection width / speed
+  minGreen: 7,          // s — actuated minimum
+  maxGreen: 40,         // s — actuated cap
+  gapOut: 3,            // s without detection ends actuated green
+  extend: 2,            // s green extension per detection
+  walkMin: 12,          // s — 2x2-lane crossing / 1.2 m/s
+  cycleMin: 40, cycleMax: 120,   // Webster clamp
+
+  // congestion alarm (density threshold idea)
+  congestionThreshold: 25,  // veh queued on one approach
+  congestionPersist: 20,    // s above threshold before alarm
+  congestionClear: 15,      // veh to clear alarm (hysteresis)
+
+  // railway
+  trainWarning: 30,     // s before train reaches a crossing
+  gateTime: 8,          // s for gates to lower/raise
+  trainSpeedKmh: 60,
+  headway: { PEAK: 120, OFFPEAK: 600, NIGHT: 1200 }, // s between trains
+  crossingPocket: 110,  // m from crossing to stop line at I2/I5
+
+  // incidents
+  accidentDuration: 300,   // s default
+
+  // demand λ (veh/s per approach) by road class and mode
+  // calibrated so the network is BUSY but stable at peak even though rail
+  // preemption steals green time at I5/I2 every 2 minutes (see TIMINGS.md §5)
+  demand: {
+    PEAK:    { main: 0.25, side: 0.10 },
+    OFFPEAK: { main: 0.15, side: 0.06 },
+    NIGHT:   { main: 0.04, side: 0.012 },
+  },
+  demandMultiplier: 1.0,   // global slider
+
+  // night flash: cautious flow through intersection, fraction of sat flow
+  flashFactorMain: 0.7,    // flashing yellow — proceed with caution
+  flashFactorSide: 0.3,    // flashing red — stop then go
+
+  // preemption
+  pocketFlush: 20,         // s of track-clearance green (fits inside 30 s warning)
+  evHoldLead: 12,          // s before ETA the EV approach must be green
+  recoveryBoost: 1.3,      // first-green multiplier repaying held queues
+};
+
+// time-of-day → mode. Peak 6:30–9:30 & 16:00–19:00, night 23:00–4:00.
+export function modeAt(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  if ((h >= 6.5 && h < 9.5) || (h >= 16 && h < 19)) return 'PEAK';
+  if (h >= 23 || h < 4) return 'NIGHT';
+  return 'OFFPEAK';
+}
+
+export const speedMs = (kmh) => kmh / 3.6;

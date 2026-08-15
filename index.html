@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HCMC Traffic Network Sim — RTS design tool</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background:#0b0e11; color:#cfd8e0; font:13px/1.45 "SF Mono", Menlo, Consolas, monospace; display:flex; height:100vh; overflow:hidden; }
+  #left { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #hud { padding:8px 14px; display:flex; gap:22px; align-items:baseline; border-bottom:1px solid #1e252c; }
+  #hud .clock { font-size:20px; color:#fff; }
+  #hud .mode-PEAK { color:#ff8b5a } #hud .mode-OFFPEAK { color:#4aa3ff } #hud .mode-NIGHT { color:#b98bff }
+  canvas { flex:1; width:100%; height:100%; display:block; }
+  #right { width:400px; border-left:1px solid #1e252c; display:flex; flex-direction:column; overflow-y:auto; }
+  #right > div { padding:10px 12px; border-bottom:1px solid #1e252c; }
+  h3 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#8fa0af; margin-bottom:8px; }
+  .grp { margin-bottom:8px; }
+  .grp label { display:block; color:#8fa0af; margin-bottom:3px; }
+  input[type=range] { width:100%; }
+  button { background:#1b232b; color:#cfd8e0; border:1px solid #2c3742; border-radius:4px; padding:4px 9px; margin:2px 2px 2px 0; cursor:pointer; font:inherit; }
+  button:hover { background:#26313c; }
+  button.warn { border-color:#7c3a3a; } button.active { background:#7c2f2f; color:#fff; }
+  select { background:#1b232b; color:#cfd8e0; border:1px solid #2c3742; border-radius:4px; padding:3px; font:inherit; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:2px 6px; font-size:12px; }
+  th { color:#5f7080; } tr:nth-child(even) td { background:#12181e; }
+  .st-GREEN { color:#37d67a } .st-YELLOW { color:#ffd23f } .st-ALLRED { color:#ff5a5a } .st-FLASH { color:#b98bff }
+  .ok { color:#37d67a } .bad { color:#ff5a5a } .dim { color:#5f7080 }
+  .msg { font-size:11px; padding:1px 0; border-bottom:1px solid #12181e; }
+  .msg .t { color:#5f7080 } .msg .ft { color:#8fa0af } .msg .d { color:#6b7c8c }
+  .alarm { color:#ffd23f; font-size:12px; padding:1px 0; }
+  .tiny { font-size:10px; text-transform:none; letter-spacing:0; color:#5f7080; float:right; }
+  #banner { display:none; padding:20px; color:#ffd23f; }
+</style>
+</head>
+<body>
+  <div id="left">
+    <div id="hud">
+      <span class="clock" id="hud-clock">--:--</span>
+      <span id="hud-mode">—</span>
+      <span class="dim" id="hud-stats"></span>
+    </div>
+    <canvas id="map"></canvas>
+  </div>
+  <div id="right">
+    <div id="controls"></div>
+    <div id="board"></div>
+    <div id="log"></div>
+  </div>
+  <div id="banner"><b>Opened via file:// ?</b> Browsers block ES modules from plain files.<br>
+    Run <code>./run.command</code> (double-click) or <code>python3 -m http.server</code> in this folder, then open <code>http://localhost:8000</code>.</div>
+
+<script>
+  // if module loading fails (file://), show the hint
+  window.addEventListener('error', (e) => {
+    if (String(e.message).match(/module|CORS|import/i) || location.protocol === 'file:') {
+      document.getElementById('banner').style.display = 'block';
+    }
+  }, true);
+</script>
+<script type="module">
+  import { CONFIG } from './src/config.js';
+  import { Simulation } from './src/main.js';
+  import { draw } from './src/ui/render.js';
+  import { buildControls } from './src/ui/controls.js';
+  import { buildEventLog } from './src/ui/eventlog.js';
+
+  const sim = new Simulation();
+  buildControls(document.getElementById('controls'), sim);
+  const refreshBoard = buildEventLog(document.getElementById('log'), document.getElementById('board'), sim);
+
+  const canvas = document.getElementById('map');
+  const ctx = canvas.getContext('2d');
+  function fit() {
+    const r = canvas.getBoundingClientRect();
+    canvas.width = r.width * devicePixelRatio; canvas.height = r.height * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    // world is ~1100x1000 (hand-map proportions); scale to fit
+    const s = Math.min(r.width / 1150, r.height / 1000);
+    ctx.scale(s, s); ctx.translate(50, 30);
+  }
+  addEventListener('resize', fit);
+
+  let last = performance.now(), acc = 0, boardT = 0;
+  function frame(now) {
+    const wall = Math.min(0.1, (now - last) / 1000); last = now;
+    acc += wall * CONFIG.timeScale;
+    let steps = 0;
+    while (acc >= CONFIG.dt && steps < 4000) { sim.step(); acc -= CONFIG.dt; steps++; }
+    fit();
+    draw(ctx, sim, canvas.width, canvas.height);
+    document.getElementById('hud-clock').textContent = sim.clock.hhmm;
+    const mode = sim.clock.mode;
+    const hm = document.getElementById('hud-mode');
+    hm.textContent = mode; hm.className = 'mode-' + mode;
+    document.getElementById('hud-stats').textContent =
+      `t=${sim.t.toFixed(0)}s · in-network ${sim.model.inNetwork().toFixed(0)} veh · trains ${sim.trains.trains.length}`;
+    if ((boardT += wall) > 0.5) { boardT = 0; refreshBoard(); }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>
