@@ -32,6 +32,15 @@
   .alarm { color:#ffd23f; font-size:12px; padding:1px 0; }
   .tiny { font-size:10px; text-transform:none; letter-spacing:0; color:#5f7080; float:right; }
   #banner { display:none; padding:20px; color:#ffd23f; }
+  #left { position:relative; }
+  #local-panel { position:absolute; z-index:10; width:238px; background:#141a20; border:1px solid #3a4650;
+    border-radius:6px; padding:8px 10px; box-shadow:0 4px 18px rgba(0,0,0,.45); font-size:12px; }
+  #local-panel .ph { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+  #local-panel .pl { margin:4px 0; color:#8fa0af; }
+  #local-panel table { width:100%; }
+  #local-panel td { padding:1px 4px; }
+  button.mini { padding:1px 6px; font-size:11px; }
+  button.mini.active { background:#2e5d34; }
 </style>
 </head>
 <body>
@@ -65,6 +74,7 @@
   import { draw } from './src/ui/render.js';
   import { buildControls } from './src/ui/controls.js';
   import { buildEventLog } from './src/ui/eventlog.js';
+  import { attachLocalPanels } from './src/ui/panel.js';
 
   const sim = new Simulation();
   buildControls(document.getElementById('controls'), sim);
@@ -72,15 +82,17 @@
 
   const canvas = document.getElementById('map');
   const ctx = canvas.getContext('2d');
+  const view = { s: 1, tx: 50, ty: 30 };   // world→screen transform, shared with panels
   function fit() {
     const r = canvas.getBoundingClientRect();
     canvas.width = r.width * devicePixelRatio; canvas.height = r.height * devicePixelRatio;
     ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
     // world is ~1100x1000 (hand-map proportions); scale to fit
-    const s = Math.min(r.width / 1150, r.height / 1000);
-    ctx.scale(s, s); ctx.translate(50, 30);
+    view.s = Math.min(r.width / 1150, r.height / 1000);
+    ctx.scale(view.s, view.s); ctx.translate(view.tx, view.ty);
   }
   addEventListener('resize', fit);
+  const refreshPanel = attachLocalPanels(document.getElementById('left'), canvas, sim, view);
 
   let last = performance.now(), acc = 0, boardT = 0;
   function frame(now) {
@@ -96,7 +108,7 @@
     hm.textContent = mode; hm.className = 'mode-' + mode;
     document.getElementById('hud-stats').textContent =
       `t=${sim.t.toFixed(0)}s · in-network ${sim.model.inNetwork().toFixed(0)} veh · trains ${sim.trains.trains.length}`;
-    if ((boardT += wall) > 0.5) { boardT = 0; refreshBoard(); }
+    if ((boardT += wall) > 0.5) { boardT = 0; refreshBoard(); refreshPanel(); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

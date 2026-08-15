@@ -26,10 +26,8 @@ export function buildControls(root, sim) {
       <button id="b-kill" class="warn">Kill central</button>
       <button id="b-jamA" class="warn">Jam gate A</button>
       <button id="b-jamB" class="warn">Jam gate B</button></div>
-    <div class="grp"><label>Pedestrian button</label>
-      <select id="sel-ped">${['I1','I2','I3','I4','I5','I6'].map((n) => `<option>${n}</option>`).join('')}</select>
-      <select id="sel-peddir"><option>N</option><option>E</option><option>S</option><option>W</option></select>
-      <button id="b-ped">Press</button></div>`;
+    <div class="grp dim">Pedestrian buttons + per-light state: click an
+      intersection on the map to open its local controller.</div>`;
 
   const $ = (id) => root.querySelector(id);
   $('#s-ts').oninput = (e) => { CONFIG.timeScale = +e.target.value; $('#v-ts').textContent = `${CONFIG.timeScale}×`; };
@@ -41,7 +39,6 @@ export function buildControls(root, sim) {
   $('#b-acc').onclick = () => { const [l, f] = $('#sel-acc').value.split(':'); sim.dropAccident(l, f, 2); };
   $('#b-train1').onclick = () => sim.forceTrain(1);
   $('#b-train2').onclick = () => sim.forceTrain(-1);
-  $('#b-ped').onclick = () => sim.pressPed($('#sel-ped').value, $('#sel-peddir').value);
 
   const kill = $('#b-kill');
   kill.onclick = () => {
