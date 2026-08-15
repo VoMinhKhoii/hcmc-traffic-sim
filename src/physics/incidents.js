@@ -17,7 +17,9 @@ export class IncidentSystem {
   dropAccident(linkId, from, lanesBlocked = 1, duration = CONFIG.accidentDuration, t = 0) {
     const factor = lanesBlocked >= CONFIG.lanes ? 0 : 0.5;
     this.accidents.push({ linkId, from, factor, until: t + duration });
-    this.model.setAccident(linkId, from, factor);
+    // apply the WORST active factor on this directed link, not the newest
+    const active = this.accidents.filter((a) => a.linkId === linkId && a.from === from);
+    this.model.setAccident(linkId, from, Math.min(...active.map((a) => a.factor)));
   }
 
   // ---- priority vehicle -------------------------------------------------
@@ -41,11 +43,16 @@ export class IncidentSystem {
   }
 
   step(dt, t, gatesDown) {
-    // accident expiry
-    this.accidents = this.accidents.filter((a) => {
-      if (t >= a.until) { this.model.setAccident(a.linkId, a.from, 1); return false; }
-      return true;
-    });
+    // accident expiry: recompute each affected directed link's factor from the
+    // accidents STILL active (overlapping accidents must not restore early)
+    const expired = this.accidents.filter((a) => t >= a.until);
+    if (expired.length) {
+      this.accidents = this.accidents.filter((a) => t < a.until);
+      for (const x of expired) {
+        const remaining = this.accidents.filter((a) => a.linkId === x.linkId && a.from === x.from);
+        this.model.setAccident(x.linkId, x.from, remaining.length ? Math.min(...remaining.map((a) => a.factor)) : 1);
+      }
+    }
 
     // EV movement: sirens clear traffic, but gates + trains outrank the EV.
     const ev = this.ev;
@@ -65,17 +72,20 @@ export class IncidentSystem {
     }
   }
 
+  // nearest crossing AHEAD of the EV on its route (a passed crossing no longer
+  // matters, and a route may cross both A and B)
   gateAheadOnRoute(ev) {
+    let best = null;
     for (let i = 0; i < ev.route.length - 1; i++) {
       const l = linkBetween(ev.route[i], ev.route[i + 1]);
       for (const [name, c] of Object.entries(CROSSINGS)) {
         if (c.link !== l.id) continue;
-        const legStart = ev.legs[i].atDist;
         const along = l.a === ev.route[i] ? c.pos : 1 - c.pos;  // c.pos is fraction from l.a
-        return { name, atDist: legStart + along * l.len };
+        const atDist = ev.legs[i].atDist + along * l.len;
+        if (atDist > ev.s && (!best || atDist < best.atDist)) best = { name, atDist };
       }
     }
-    return null;
+    return best;
   }
 
   drainEvents() { const e = this.events; this.events = []; return e; }

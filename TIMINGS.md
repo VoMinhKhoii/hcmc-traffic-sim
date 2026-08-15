@@ -104,6 +104,12 @@ ETA along I1→I2→I4).
 
 ## 12. Speeds & distances
 
+**Stated model simplification** (from adversarial review): links have no
+physical storage cap, so queues can exceed what the pavement would hold and
+congestion does not spill back to block upstream discharge. Acceptable for
+signal-timing design (the congestion alarm fires long before those regimes);
+call it out in the report's assumptions.
+
 Link speed 40 km/h (urban arterial), train 60 km/h, EV 50 km/h. Topology and
 distances follow the team's hand-drawn map (approximate, tunable in
 `network.js`): I3–I5 430 (Ng.Văn Trỗi), I3–I1 350, I1–I6 450 (Ng.Trọng

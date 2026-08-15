@@ -55,11 +55,13 @@ export function corridorOffsets() {
 /**
  * Fixed plan step: where in the cycle should we be? Request that phase.
  * Cycle layout: [greenA | Y+AR | greenB | Y+AR], anchored to sim time − offset.
+ * Phase B is requested AT pos = greenA so the machine's own yellow+all-red
+ * lands inside the clearance window (not appended after it).
  */
 export function fixedStep(machine, params, t) {
   const L2 = CONFIG.yellow + CONFIG.allRed;
   const pos = mod(t - params.offset, params.cycle);
-  const want = pos < params.greenA + L2 ? 'A' : 'B';
+  const want = (pos < params.greenA || pos >= params.greenA + L2 + params.greenB) ? 'A' : 'B';
   machine.requestPhase(want);
 }
 

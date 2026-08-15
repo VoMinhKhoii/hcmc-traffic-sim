@@ -73,8 +73,12 @@ export class Simulation {
 
   // ---- operator console (the scenario buttons) --------------------------
   dispatchEV(route = ['I1', 'I2', 'I4']) {
+    // dispatch is a CENTRAL operator action: refuse while central is offline
+    // (an EV with no preemption would sail through reds), and one EV at a time
+    if (!this.centralAlive) return null;
+    if (this.incidents.ev && !this.incidents.ev.done) return null;
     const legs = this.incidents.dispatchEV(route, this.t);
-    if (this.centralAlive) this.central.commandEVCorridor(legs, this.t);
+    this.central.commandEVCorridor(legs, this.t);
     return legs;
   }
   dropAccident(linkId, from, lanesBlocked = 1, duration = CONFIG.accidentDuration) {

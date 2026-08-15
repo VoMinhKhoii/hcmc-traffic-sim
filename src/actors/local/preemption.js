@@ -53,6 +53,10 @@ export class PreemptionOverlay {
       return true;
     }
     if (this.ev) {
+      // watchdog: if RESUME never arrives (central died mid-run, message
+      // dropped), release on our own well after the ETA — a local controller
+      // must never stay preempted forever on a lost message
+      if (t > this.ev.eta + 90) { this.onResume(t); return false; }
       const clearance = CONFIG.yellow + CONFIG.allRed;
       if (t >= this.ev.eta - CONFIG.evHoldLead - clearance) {
         this.ev.active = true;

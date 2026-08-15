@@ -53,6 +53,12 @@ export class CentralController {
       else cmd = { plan: 'ACTUATED', params: {} };
       this.bus.send('CENTRAL', node, MSG.SET_PLAN, cmd, t);
     }
+    // a time-of-day broadcast must not silently drop an active congestion
+    // response — re-apply metering for every still-active alarm
+    for (const key of Object.keys(this.congested)) {
+      const [node, approach] = key.split(':');
+      this.applyMetering(node, approach, t);
+    }
   }
 
   // ---- congestion response (accident scenario) --------------------------
@@ -64,19 +70,7 @@ export class CentralController {
     if (m.data.active) {
       this.congested[key] = true;
       this.alarms.push({ t, kind: 'CONGESTION', detail: `${m.from} ${m.data.approach} q=${m.data.q}` });
-      const ap = APPROACHES[m.from][m.data.approach];
-      if (!ap.link) return;                       // external approach: nothing to meter
-      const l = linkById(ap.link);
-      const upstream = l.a === m.from ? l.b : l.a;
-      // upstream: fixed plan with the phase feeding this link shortened 40%
-      const base = websterPlan(upstream, this.mode === 'NIGHT' ? 'OFFPEAK' : this.mode, 0);
-      // cut hard: metering only works if capacity drops BELOW the arrival rate
-      const feedPhase = feedingPhase(upstream, ap.link);
-      if (feedPhase === 'A') base.greenA = Math.max(CONFIG.minGreen, base.greenA * 0.35);
-      else base.greenB = Math.max(CONFIG.minGreen, base.greenB * 0.35);
-      base.cycle = base.greenA + base.greenB + 2 * (CONFIG.yellow + CONFIG.allRed);
-      this.bus.send('CENTRAL', upstream, MSG.SET_PLAN, { plan: 'FIXED', params: base }, t);
-      this.retimed.add(upstream);
+      this.applyMetering(m.from, m.data.approach, t);
     } else {
       delete this.congested[key];
       this.alarms.push({ t, kind: 'CONGESTION_CLEAR', detail: `${m.from} ${m.data.approach}` });
@@ -86,6 +80,28 @@ export class CentralController {
         this.broadcastPlans(t, nodes);            // restore normal plans
       }
     }
+  }
+
+  // meter the upstream neighbor feeding the congested approach: fixed plan
+  // with the feeding phase cut hard — metering only works if capacity drops
+  // BELOW the arrival rate
+  applyMetering(node, approach, t) {
+    const ap = APPROACHES[node][approach];
+    if (!ap.link) return;                       // external approach: nothing to meter
+    if (this.retimed.has(node)) return;         // its congestion is our metering's side effect
+    const l = linkById(ap.link);
+    const upstream = l.a === node ? l.b : l.a;
+    if (this.retimed.has(upstream)) return;     // never cascade-meter an already-metered node
+    // feeding phase pinned to minimum green, other phase stretched: metering
+    // works through the feeding phase's SHARE of the cycle, so capacity toward
+    // the blocked link drops below the arrival rate
+    const base = websterPlan(upstream, this.mode === 'NIGHT' ? 'OFFPEAK' : this.mode, 0);
+    const feedPhase = feedingPhase(upstream, ap.link);
+    if (feedPhase === 'A') { base.greenA = CONFIG.minGreen; base.greenB *= 1.5; }
+    else { base.greenB = CONFIG.minGreen; base.greenA *= 1.5; }
+    base.cycle = base.greenA + base.greenB + 2 * (CONFIG.yellow + CONFIG.allRed);
+    this.bus.send('CENTRAL', upstream, MSG.SET_PLAN, { plan: 'FIXED', params: base }, t);
+    this.retimed.add(upstream);
   }
 
   // ---- operator: EV corridor --------------------------------------------

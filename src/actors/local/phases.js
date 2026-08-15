@@ -19,16 +19,18 @@ export class SignalMachine {
 
   greenDirs() { return this.state === 'GREEN' ? PHASES[this.phase] : []; }
 
-  // request switch to `phase` (no-op if already there or already clearing)
+  // request switch to `phase` (no-op if already there or already clearing).
+  // Leaving FLASH goes through ALL-RED first: traffic was moving under
+  // flashing yellow, so a direct jump to a conflicting green is unsafe.
   requestPhase(phase) {
-    if (this.state === 'FLASH') { this.setState('GREEN', phase); return; }
+    if (this.state === 'FLASH') { this.pending = phase; this.setState('ALLRED'); return; }
     if (this.phase === phase && this.state === 'GREEN') return;
     if (this.pending) return;
     if (this.state === 'GREEN') { this.pending = phase; this.setState('YELLOW'); }
   }
 
   enterFlash() { if (this.state !== 'FLASH') { this.pending = null; this.setState('FLASH'); } }
-  exitFlash(phase = 'A') { if (this.state === 'FLASH') this.setState('GREEN', phase); }
+  exitFlash(phase = 'A') { if (this.state === 'FLASH') { this.pending = phase; this.setState('ALLRED'); } }
 
   setState(state, phase = null) {
     this.state = state; this.stateT = 0; this.changed = true;

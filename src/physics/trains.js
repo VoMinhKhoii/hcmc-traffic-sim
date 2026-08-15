@@ -35,9 +35,14 @@ export class TrainSystem {
     this.trains = [];        // {id, s, dir(+1 A→B / -1), speed, warned:{A,B}, cleared:{A,B}}
     this.nextSpawn = 60;     // first train 1 sim-minute in
     this.nextId = 1;
-    this.signalRed = false;  // set by RailwayController on gate fault
+    this.redCrossings = { A: false, B: false };  // per-crossing train signal (gate fault)
+    this.lastMode = null;
     this.events = [];        // {type:'APPROACH'|'CLEAR', crossing, eta}
   }
+
+  // legacy aggregate view: red if ANY crossing signal is red
+  get signalRed() { return this.redCrossings.A || this.redCrossings.B; }
+  set signalRed(v) { this.redCrossings.A = v; this.redCrossings.B = v; }
 
   forceTrain(dir = 1) { this.spawn(dir); }
 
@@ -52,23 +57,29 @@ export class TrainSystem {
 
   step(dt, t, mode) {
     // scheduled spawns (assumption noted in TIMINGS.md: night trains modeled
-    // every night at 20-min headway; brief's Fri/Sat-only detail is a display note)
+    // every night at 20-min headway; brief's Fri/Sat-only detail is a display
+    // note). On a mode change, re-anchor the schedule to the NEW headway so a
+    // pre-peak spawn doesn't leave peak running on the off-peak timetable.
+    if (mode !== this.lastMode) {
+      this.lastMode = mode;
+      if (Number.isFinite(this.nextSpawn))   // Infinity = scheduler disabled (tests)
+        this.nextSpawn = Math.min(this.nextSpawn, t + CONFIG.headway[mode]);
+    }
     if (t >= this.nextSpawn) {
       this.spawn(this.nextId % 2 === 0 ? 1 : -1);
       this.nextSpawn = t + CONFIG.headway[mode];
     }
 
     for (const tr of this.trains) {
-      // a red train signal stops the train 80 m before its NEXT crossing
+      // a red signal at a SPECIFIC crossing stops the train 80 m before THAT
+      // crossing; a healthy crossing on the same corridor is unaffected
       let v = tr.speed;
-      if (this.signalRed) {
-        const nextS = this.nextCrossingS(tr);
-        if (nextS !== null) {
-          const stopAt = nextS - tr.dir * 80;
-          if (tr.dir === 1 && tr.s + v * dt > stopAt && tr.s <= stopAt) v = Math.max(0, (stopAt - tr.s) / dt);
-          if (tr.dir === -1 && tr.s - v * dt < stopAt && tr.s >= stopAt) v = Math.max(0, (tr.s - stopAt) / dt);
-          if ((tr.dir === 1 && Math.abs(tr.s - stopAt) < 1) || (tr.dir === -1 && Math.abs(tr.s - stopAt) < 1)) v = 0;
-        }
+      const next = this.nextCrossing(tr);
+      if (next && this.redCrossings[next.name]) {
+        const stopAt = next.s - tr.dir * 80;
+        if (tr.dir === 1 && tr.s + v * dt > stopAt && tr.s <= stopAt) v = Math.max(0, (stopAt - tr.s) / dt);
+        if (tr.dir === -1 && tr.s - v * dt < stopAt && tr.s >= stopAt) v = Math.max(0, (tr.s - stopAt) / dt);
+        if (Math.abs(tr.s - stopAt) < 1) v = 0;
       }
       tr.s += tr.dir * v * dt;
 
@@ -80,8 +91,10 @@ export class TrainSystem {
           tr.warned[name] = true;
           this.events.push({ type: 'APPROACH', crossing: name, train: tr.id, eta });
         }
+        // CLEAR only once the train's REAR is past the crossing's occupancy
+        // zone (+80 m), so gates never begin raising under an occupying train
         const back = tr.s - tr.dir * TRAIN_LEN;
-        const passed = tr.dir === 1 ? Math.min(tr.s, back) > cs : Math.max(tr.s, back) < cs;
+        const passed = tr.dir === 1 ? back > cs + 80 : back < cs - 80;
         if (tr.warned[name] && !tr.cleared[name] && passed) {
           tr.cleared[name] = true;
           this.events.push({ type: 'CLEAR', crossing: name, train: tr.id });
@@ -91,12 +104,12 @@ export class TrainSystem {
     this.trains = this.trains.filter((tr) => tr.s > -TRAIN_LEN - 10 && tr.s < RAIL.total + TRAIN_LEN + 10);
   }
 
-  nextCrossingS(tr) {
+  nextCrossing(tr) {
     const ahead = ['A', 'B']
-      .map((n) => (n === 'A' ? RAIL.sA : RAIL.sB))
-      .filter((cs) => (tr.dir === 1 ? cs > tr.s : cs < tr.s));
+      .map((n) => ({ name: n, s: n === 'A' ? RAIL.sA : RAIL.sB }))
+      .filter((c) => (tr.dir === 1 ? c.s > tr.s : c.s < tr.s));
     if (!ahead.length) return null;
-    return tr.dir === 1 ? Math.min(...ahead) : Math.max(...ahead);
+    return ahead.reduce((m, c) => (tr.dir === 1 ? (c.s < m.s ? c : m) : (c.s > m.s ? c : m)));
   }
 
   // is any train occupying crossing zone (±60 m)?

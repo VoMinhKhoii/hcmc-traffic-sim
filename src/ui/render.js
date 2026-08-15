@@ -115,7 +115,7 @@ export function draw(ctx, sim) {
         ctx.stroke();
         if (q >= 8)
           label(ctx, p.x + v[0] * (HALF + 16 + len) - v[1] * 16, p.y + v[1] * (HALF + 16 + len) + v[0] * 16 + 4,
-            `${Math.round(q)}`, COL.label, 11, true);
+            `(${Math.round(q)})`, COL.label, 11, true);
       }
       drawHead(ctx, n, d, p, v, L, t);
     }

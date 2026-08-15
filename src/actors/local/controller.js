@@ -47,20 +47,24 @@ export class LocalController {
       if (this.plan.type === 'FIXED') fixedStep(this.machine, this.plan.params, t);
       else if (this.plan.type === 'FLASH') flashStep(this.machine, sensors, this.mem);
       else actuatedStep(this.machine, sensors, boost);
-    } else if (this.machine.state === 'FLASH') {
-      // preemption during night flash: exit into full signal operation
-      this.machine.exitFlash('A');
     }
 
-    // 4) advance the state machine + WALK indication
+    // 4) advance the state machine
     this.machine.tick(dt);
-    this.machine.walk = this.machine.state === 'GREEN' &&
-      this.machine.stateT <= Math.max(CONFIG.walkMin, 0) &&
-      (this.plan.type === 'FIXED' || PHASES[this.machine.phase].some((d) => sensors[d].pedButton));
 
-    // 5) served ped buttons clear when their phase goes green
-    if (this.machine.state === 'GREEN') return this.report(t, sensors, PHASES[this.machine.phase]);
-    this.report(t, sensors, []);
+    // 5) WALK is latched at GREEN ONSET only (a mid-green press waits for the
+    // next cycle — there may not be enough green left to cross), and buttons
+    // are cleared ONLY when their WALK is actually displayed.
+    const m = this.machine;
+    let served = [];
+    if (m.state === 'GREEN' && m.stateT <= dt + 1e-9) {
+      const btn = PHASES[m.phase].some((d) => sensors[d].pedButton);
+      m.walk = this.plan.type === 'FIXED' || btn;
+      if (m.walk) served = PHASES[m.phase];
+    } else if (m.state !== 'GREEN' || m.stateT > CONFIG.walkMin) {
+      m.walk = false;
+    }
+    return this.report(t, sensors, served);
   }
 
   report(t, sensors, servedDirs) {

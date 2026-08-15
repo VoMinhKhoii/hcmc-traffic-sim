@@ -5,7 +5,7 @@
 
 import { CONFIG, speedMs } from '../config.js';
 import {
-  INTERSECTIONS, LINKS, APPROACHES, PHASES, DIRS, CROSSINGS,
+  INTERSECTIONS, LINKS, APPROACHES, PHASES, DIRS, CROSSINGS, MAIN_PHASE,
   throughTarget, approachClass, feedsApproach,
 } from '../network.js';
 
@@ -26,10 +26,16 @@ export class TrafficModel {
     }
     for (const l of LINKS) {
       for (const from of [l.a, l.b]) {
+        // crossFrac: where along this DIRECTED trip the rail crossing sits
+        // (null if the link has no crossing)
+        const crossFrac = l.crossing ? (from === l.a
+          ? CROSSINGS[l.crossing.name].pos
+          : 1 - CROSSINGS[l.crossing.name].pos) : null;
         this.pipes[`${l.id}:${from}`] = {
           link: l, from, entries: [],   // {enterT, arriveAt, n}
           entryOpen: true,              // false while boom gates are down
           capFactor: 1,                 // accident throttle on entering this link
+          crossFrac, gateDown: false, closeT: 0,
         };
       }
     }
@@ -59,13 +65,21 @@ export class TrafficModel {
       if (a.arrivedFrac >= 1) { a.arrivedFrac -= 1; a.lastArrival = t; }
     }
 
-    // 2) pipe deliveries (vehicles finishing a link)
+    // 2) pipe deliveries (vehicles finishing a link). A platoon that had NOT
+    // yet passed the rail crossing when the gates closed waits AT the gate —
+    // it does not teleport across a closed crossing.
     for (const p of Object.values(this.pipes)) {
       if (!p.entries.length) continue;
       const dest = feedsApproach(p.link.id, p.from);
       const da = this.ap(dest.node, dest.dir);
       const keep = [];
       for (const e of p.entries) {
+        if (p.gateDown && p.crossFrac !== null &&
+            (e.held || e.enterT + (e.arriveAt - e.enterT) * p.crossFrac > p.closeT)) {
+          e.held = true;
+          keep.push(e);   // held at the gate until it reopens
+          continue;
+        }
         if (e.arriveAt <= t) {
           da.q += e.n; da.arrivedFrac += e.n;
           if (da.arrivedFrac >= 1) { da.arrivedFrac -= 1; da.lastArrival = t; }
@@ -81,7 +95,8 @@ export class TrafficModel {
         let factor = 0;
         if (L.state === 'GREEN' && L.green && PHASES[L.green].includes(d)) factor = 1;
         else if (L.state === 'FLASH')
-          factor = a.cls === 'main' ? CONFIG.flashFactorMain : CONFIG.flashFactorSide;
+          // must match the DISPLAYED aspect: flashing yellow = main phase
+          factor = PHASES[MAIN_PHASE[node]].includes(d) ? CONFIG.flashFactorMain : CONFIG.flashFactorSide;
         if (factor === 0 || a.q <= 0) continue;
 
         const tgt = throughTarget(node, d);
@@ -98,9 +113,10 @@ export class TrafficModel {
         else {
           const p = this.pipes[`${tgt.link}:${node}`];
           const travel = p.link.len / speedMs(CONFIG.speedKmh);
-          // coalesce into ~2s platoon buckets (one entry per platoon, not per tick)
+          // coalesce into ~2s platoon buckets (one entry per platoon, not per
+          // tick); the bucket arrives when its LAST vehicle would (never early)
           const last = p.entries[p.entries.length - 1];
-          if (last && t - last.enterT < 2) last.n += n;
+          if (last && t - last.enterT < 2) { last.n += n; last.arriveAt = t + travel; }
           else p.entries.push({ enterT: t, arriveAt: t + travel, n });
         }
       }
@@ -119,12 +135,26 @@ export class TrafficModel {
   }
 
   // ---- controls from railway / incidents --------------------------------
-  setGate(crossName, down) {
+  setGate(crossName, down, t = 0) {
     const c = CROSSINGS[crossName];
-    const l = c.link;
-    // gates block NEW entry to the crossing link from both ends
-    this.pipes[`${l}:${LINKS.find((x) => x.id === l).a}`].entryOpen = !down;
-    this.pipes[`${l}:${LINKS.find((x) => x.id === l).b}`].entryOpen = !down;
+    const l = c.link, link = LINKS.find((x) => x.id === l);
+    // gates block NEW entry to the crossing link AND hold in-transit platoons
+    for (const from of [link.a, link.b]) {
+      const pipe = this.pipes[`${l}:${from}`];
+      pipe.entryOpen = !down;
+      if (down && !pipe.gateDown) { pipe.gateDown = true; pipe.closeT = t; }
+      if (!down && pipe.gateDown) {
+        pipe.gateDown = false;
+        // held platoons resume FROM THE GATE: remaining trip is the part of
+        // the link beyond the crossing
+        for (const e of pipe.entries)
+          if (e.held) {
+            e.arriveAt = t + (e.arriveAt - e.enterT) * (1 - pipe.crossFrac);
+            e.enterT = t - 1;   // keep render progress sane
+            e.held = false;
+          }
+      }
+    }
     const p = this.pocket[crossName];
     if (down && !p.closed) { p.closed = true; p.q = this.ap(c.intersection, c.pocketApproach).q; }
     if (!down) p.closed = false;

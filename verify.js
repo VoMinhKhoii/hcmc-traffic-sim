@@ -27,7 +27,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 function fresh(hour, opts = {}) {
   const sim = new Simulation();
   sim.clock.startHour = hour;
-  if (opts.noTrains) sim.trains.nextSpawn = 1e12;
+  if (opts.noTrains) sim.trains.nextSpawn = Infinity;
   sim.bus.onLog = (m) => { if (!m.dropped) seenTypes.add(m.type); };
   return sim;
 }
@@ -291,8 +291,6 @@ scenario(14, 'Kill central: locals autonomous, buffer + resync on reconnect', ()
   const sim = fresh(7, { noTrains: true });
   sim.run(120);
   sim.killCentral();
-  const changesBefore = {};
-  for (const [n, lc] of Object.entries(sim.locals)) changesBefore[n] = greenLog(sim).filter((g) => g.node === n).length;
   sim.run(300);
   // locals must keep cycling while central is dead (count via machine, not bus)
   for (const [n, lc] of Object.entries(sim.locals))
@@ -361,6 +359,108 @@ scenario(17, 'Combined stress: peak + trains + accident + EV', () => {
   for (const a of Object.values(sim.model.approaches)) maxQ = Math.max(maxQ, a.q);
   assert(maxQ < 200, `network gridlocked (${maxQ.toFixed(0)} veh)`);
   return `maxQ=${maxQ.toFixed(0)} veh, conservation err ${err.toExponential(1)}`;
+});
+
+// ---- regression scenarios from the Codex adversarial review ---------------
+
+scenario(19, 'Flash exit passes through ALL-RED (never FLASH→GREEN direct)', () => {
+  const sim = fresh(23.5, { noTrains: true });
+  sim.run(60);
+  sim.pressPed('I3', 'N');
+  let prev = 'FLASH', sawAllRed = false, entered = false;
+  for (let i = 0; i < 1200; i++) {
+    sim.step();
+    const st = sim.locals.I3.machine.state;
+    if (prev === 'FLASH' && st === 'GREEN') throw new Error('FLASH → GREEN with no clearance');
+    if (prev === 'FLASH' && st === 'ALLRED') sawAllRed = true;
+    if (st === 'GREEN') { entered = true; break; }
+    prev = st;
+  }
+  assert(sawAllRed && entered, 'never served the ped call via all-red clearance');
+});
+
+scenario(20, 'Ped button pressed MID-green is served next cycle, not eaten', () => {
+  const sim = fresh(7, { noTrains: true });   // peak FIXED: walk shows at green onset
+  sim.run(100);
+  // wait until I1 is ~5s INTO a phase-B green, then press its crossing button
+  while (!(sim.locals.I1.machine.state === 'GREEN' && sim.locals.I1.machine.phase === 'B'
+    && sim.locals.I1.machine.stateT > 5)) sim.step();
+  sim.pressPed('I1', 'N');
+  sim.step();
+  assert(sim.model.ap('I1', 'N').pedButton, 'button eaten immediately without WALK');
+  // it must survive until the NEXT B-green onset, where WALK serves it
+  let servedAtOnset = false;
+  for (let i = 0; i < 2000; i++) {
+    sim.step();
+    const m = sim.locals.I1.machine;
+    if (m.state === 'GREEN' && m.phase === 'B' && m.stateT <= 0.2 && m.walk
+      && !sim.model.ap('I1', 'N').pedButton) { servedAtOnset = true; break; }
+  }
+  assert(servedAtOnset, 'button never served at a green onset');
+});
+
+scenario(21, 'Gates stay down (and entry closed) until train fully clear', () => {
+  const sim = fresh(7, { noTrains: true });
+  sim.run(60);
+  sim.forceTrain(1);
+  for (let i = 0; i < 12000; i++) {
+    sim.step();
+    for (const name of ['A', 'B']) {
+      const st = sim.railway.crossings[name].state;
+      if (sim.trains.occupying(name))
+        assert(st === 'CLOSED' || st === 'LOWERING', `${name} ${st} while train occupies crossing`);
+      if (st === 'RAISING') {
+        const c = CROSSINGS[name];
+        for (const [key, pipe] of Object.entries(sim.model.pipes))
+          if (key.startsWith(c.link + ':'))
+            assert(!pipe.entryOpen, 'road entry open during RAISING');
+      }
+    }
+  }
+});
+
+scenario(22, 'Jam gate with NO train: clear releases the intersection hold', () => {
+  const sim = fresh(10, { noTrains: true });
+  sim.run(30);
+  sim.jamGate('A');
+  sim.run(60);
+  assert(sim.locals.I5.overlay.rail !== null, 'fault did not hold I5');
+  assert(sim.railway.crossings.A.state === 'CLOSED', 'fault did not physically close gates');
+  sim.clearGateFault('A');
+  sim.run(60);
+  assert(sim.locals.I5.overlay.rail === null, 'hold never released after fault cleared (no train ever came)');
+  assert(sim.railway.crossings.A.state === 'OPEN', 'gates never reopened');
+});
+
+scenario(23, 'EV lifecycle: no double dispatch, none while central dead', () => {
+  const sim = fresh(10, { noTrains: true });
+  sim.run(30);
+  const first = sim.dispatchEV(['I1', 'I2', 'I4']);
+  assert(first, 'first dispatch refused');
+  assert(sim.dispatchEV(['I3', 'I5', 'I6', 'I4']) === null, 'second EV accepted while first active');
+  assert(sim.incidents.ev.route[0] === 'I1', 'first EV overwritten');
+  // central dies mid-run: watchdog must still release every preempt
+  sim.run(20);
+  sim.killCentral();
+  sim.run(400);
+  for (const n of ['I1', 'I2', 'I4'])
+    assert(sim.locals[n].overlay.ev === null, `${n} stuck in EV preempt after central died`);
+  assert(sim.dispatchEV(['I1', 'I2', 'I4']) === null, 'dispatch accepted while central offline');
+});
+
+scenario(24, 'Platoon inside link when gates close waits at the gate', () => {
+  const sim = fresh(10, { noTrains: true });
+  sim.run(30);
+  const pipe = sim.model.pipes['I3-I5:I3'];   // crossing A sits at 74% of this trip
+  const t0 = sim.t, travel = 430 / (40 / 3.6);
+  const marked = { enterT: t0, arriveAt: t0 + travel, n: 5 };  // just entered: has NOT crossed yet
+  pipe.entries.push(marked);
+  sim.model.setGate('A', true, sim.t);
+  sim.run(travel + 20);                        // well past its nominal arrival
+  assert(pipe.entries.includes(marked) && marked.held, 'platoon crossed a closed gate');
+  sim.model.setGate('A', false, sim.t);
+  sim.run(travel);
+  assert(!pipe.entries.includes(marked), 'held platoon never delivered after reopen');
 });
 
 scenario(18, 'Architecture audit: all coordination via the 9 typed messages', () => {
