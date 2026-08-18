@@ -3,12 +3,12 @@
 //
 //   I3 ───────────R1 (Ng.Văn Trỗi)──────✕rail─── I5
 //   │R5                                          │
-//   I1 ───────R3 (Ng.Trọng Tuyển)─────────────── I6   R2 (Trần Huy Liệu)
+//   I1 ───────R3 (Ng.Trọng Tuyển)───✕rail─────── I6   R2 (Trần Huy Liệu)
 //   │R5                                          │      runs I5→I6→I4
 //   I2 ────────R4 (diagonal)───✕rail──────────── I4
 //
-// Railway (North–South line, along Lê Văn Sỹ) crosses R1 near I5 (crossing A)
-// and R4 near I2 (crossing B), 110 m from each stop line.
+// Railway (North–South line, along Lê Văn Sỹ) crosses R1 near I5 (A),
+// R3 east of I1 (C), and R4 near I2 (B).
 
 // Canvas coordinates in the hand-drawn map's proportions (spread out, not compact).
 export const INTERSECTIONS = {
@@ -63,14 +63,53 @@ export const MAIN_PHASE = { I3: 'A', I5: 'A', I1: 'A', I2: 'B', I6: 'B', I4: 'B'
 // is the "pocket" (queue between stop line and tracks that can spill back).
 // Crossing A: on R1 110 m west of I5 → I5's W approach is the pocket.
 // Crossing B: on the diagonal 110 m from I2 → I2's S approach is the pocket.
-export const CROSSINGS = {
-  A: { link: 'I3-I5', intersection: 'I5', pocketApproach: 'W', pos: frac('I3-I5', 'I5', 110) },
-  B: { link: 'I2-I4', intersection: 'I2', pocketApproach: 'S', pos: frac('I2-I4', 'I2', 110) },
+// Crossing C is computed analytically: intersect segment I1–I6 with the
+// infinite rail line through the already-defined A and B crossing points.
+const crossingA = {
+  link: 'I3-I5', intersection: 'I5', pocketApproach: 'W',
+  pos: frac('I3-I5', 'I5', 110), pocketLength: 110,
+};
+const crossingB = {
+  link: 'I2-I4', intersection: 'I2', pocketApproach: 'S',
+  pos: frac('I2-I4', 'I2', 110), pocketLength: 110,
+};
+const crossingCPos = railIntersectionFraction(crossingA, crossingB, 'I1-I6');
+const crossingC = {
+  link: 'I1-I6', intersection: 'I1', pocketApproach: 'E',
+  pos: crossingCPos, pocketLength: linkById('I1-I6').len * crossingCPos,
+};
+
+export const CROSSINGS = { A: crossingA, B: crossingB, C: crossingC };
+
+// Link metadata drives pipe/gate construction. C's marker uses the same
+// analytically derived distance as its safety pocket rather than an estimate.
+linkById('I1-I6').crossing = {
+  name: 'C', near: 'I1', dist: crossingC.pocketLength,
 };
 
 function frac(linkId, near, dist) {
   const l = LINKS.find((x) => x.id === linkId);
   return near === l.a ? dist / l.len : 1 - dist / l.len;
+}
+
+function crossingPoint(c) {
+  const l = linkById(c.link), a = INTERSECTIONS[l.a], b = INTERSECTIONS[l.b];
+  return { x: a.x + (b.x - a.x) * c.pos, y: a.y + (b.y - a.y) * c.pos };
+}
+
+function railIntersectionFraction(first, second, roadLinkId) {
+  const p = crossingPoint(first), q = crossingPoint(second);
+  const road = linkById(roadLinkId);
+  const r = INTERSECTIONS[road.a], s = INTERSECTIONS[road.b];
+  const rail = { x: q.x - p.x, y: q.y - p.y };
+  const street = { x: s.x - r.x, y: s.y - r.y };
+  const fromRail = { x: r.x - p.x, y: r.y - p.y };
+  const cross = (u, v) => u.x * v.y - u.y * v.x;
+  const denominator = cross(rail, street);
+  if (Math.abs(denominator) < 1e-12) throw new Error(`rail is parallel to ${roadLinkId}`);
+  const pos = cross(fromRail, rail) / denominator;
+  if (pos < 0 || pos > 1) throw new Error(`rail misses segment ${roadLinkId}`);
+  return pos;
 }
 
 export const OPPOSITE = { N: 'S', S: 'N', E: 'W', W: 'E' };
@@ -95,6 +134,21 @@ export function approachClass(node, dir) {
   if (ap.ext) return ap.ext;
   const road = linkById(ap.link).road;
   return road === 'R1' || road === 'R2' ? 'main' : 'side';
+}
+
+// Unit vector pointing OUT of `node` along the road that carries approach
+// `dir` — the ACTUAL geometry (diagonal for diagonal links), falling back to
+// the compass direction for external stubs. Renderers must use this, not the
+// compass, so approach furniture lines up with the drawn road.
+export function approachVector(node, dir) {
+  const ap = APPROACHES[node][dir];
+  if (ap.link) {
+    const l = linkById(ap.link);
+    const p = INTERSECTIONS[node], o = INTERSECTIONS[l.a === node ? l.b : l.a];
+    const d = Math.hypot(o.x - p.x, o.y - p.y);
+    return { x: (o.x - p.x) / d, y: (o.y - p.y) / d };
+  }
+  return { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } }[dir];
 }
 
 // Directed-link travel: which approach does traffic entering `link` at `from` feed?

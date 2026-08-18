@@ -1,6 +1,5 @@
 // @ts-check
-// ui/eventlog.js — the control-room display: live message-bus traffic,
-// per-intersection status board, and the operator alarm list.
+// ui/eventlog.js — live message causality, status board and operator alarms.
 
 import { MSG } from '../messages.js';
 
@@ -13,16 +12,24 @@ const TYPECOL = {
 
 export function buildEventLog(logRoot, boardRoot, sim) {
   let showStatus = false;
-  logRoot.innerHTML = `<h3>Message traffic <label class="tiny"><input type="checkbox" id="c-status"> show STATUS_UPDATE</label></h3><div id="log-lines"></div>`;
+  logRoot.innerHTML = `<h3>Message causality <label class="tiny"><input type="checkbox" id="c-status"> show STATUS_UPDATE</label></h3><div id="log-lines"></div>`;
   const lines = logRoot.querySelector('#log-lines');
   logRoot.querySelector('#c-status').onchange = (e) => { showStatus = e.target.checked; };
 
   sim.bus.onLog = (m) => {
     if (m.type === MSG.STATUS_UPDATE && !showStatus && !m.dropped && !m.flushed) return;
     const el = document.createElement('div');
-    el.className = 'msg';
-    const tag = m.dropped ? ' ✕dropped' : m.flushed ? ' ↻flushed' : '';
-    el.innerHTML = `<span class="t">${m.t.toFixed(0)}s</span> <span style="color:${TYPECOL[m.type] ?? '#fff'}">${m.type}</span> <span class="ft">${m.from}→${m.to}${tag}</span> <span class="d">${short(m.data)}</span>`;
+    const linked = m.meta?.correlationId && !m.meta?.root;
+    el.className = `msg${linked ? ' chain-child' : ''}${m.meta?.root ? ' chain-root' : ''}`;
+    const delivery = m.dropped ? ' ✕dropped' : m.flushed ? ' ↷flushed' : '';
+    const correlation = m.meta?.correlationId
+      ? `<span class="cid">${linked ? '└' : '◆'} ${escapeHtml(m.meta.correlationId)}</span>` : '';
+    el.innerHTML = `<div class="msg-main"><span class="t">${m.t.toFixed(1)}s</span>${correlation}
+      <span class="type" style="color:${TYPECOL[m.type] ?? '#cfd8e0'}">${m.type}</span>
+      <span class="ft">${escapeHtml(m.from)} → ${escapeHtml(m.to)}${delivery}</span>
+      <span class="d">${messageDetail(m)}</span></div>
+      <div class="causal"><span class="cause">why</span> ${formatCause(m)} <span class="arrow">→</span>
+      <span class="effect">changed</span> ${formatEffect(m)}</div>`;
     lines.prepend(el);
     while (lines.children.length > 120) lines.lastChild.remove();
   };
@@ -45,7 +52,68 @@ export function buildEventLog(logRoot, boardRoot, sim) {
   };
 }
 
+function messageDetail(m) {
+  if (m.type === MSG.SET_PLAN) return planDelta(m);
+  if (m.type === MSG.CONGESTION_ALARM)
+    return `${m.data.active ? 'RAISE' : 'CLEAR'} · approach=${escapeHtml(m.data.approach)} · q=${number(m.data.q)} veh`;
+  if (m.type === MSG.TRAIN_APPROACHING)
+    return `crossing=${escapeHtml(m.data.crossing)} · eta=${number(m.meta?.cause?.measurement?.value ?? m.data.eta)} s`;
+  if (m.type === MSG.PREEMPT)
+    return `approach=${escapeHtml(m.data.approach)} · eta=${number(m.meta?.cause?.measurement?.value)} s`;
+  return escapeHtml(short(m.data));
+}
+
+function planDelta(m) {
+  const before = m.meta?.effect?.before ?? { plan: '?', params: {} };
+  const after = m.meta?.effect?.after ?? { plan: m.data.plan, params: m.data.params ?? {} };
+  const bits = [];
+  if (before.plan !== after.plan)
+    bits.push(`<span class="delta">${escapeHtml(before.plan)} → ${escapeHtml(after.plan)}</span>`);
+  else bits.push(`<b>${escapeHtml(after.plan)}</b>`);
+  for (const [key, label] of [['greenA', 'green A'], ['greenB', 'green B'], ['cycle', 'cycle'], ['offset', 'offset']]) {
+    const oldValue = before.params?.[key], newValue = after.params?.[key];
+    if (newValue === undefined) continue;
+    if (oldValue === undefined || Math.abs(oldValue - newValue) > 1e-9) {
+      const oldText = oldValue === undefined ? '—' : `${number(oldValue)}s`;
+      bits.push(`${label} <span class="delta">${oldText} → ${number(newValue)}s</span>`);
+    } else if (key === 'cycle') {
+      bits.push(`<span class="unchanged">cycle ${number(newValue)}s unchanged</span>`);
+    } else if (key === 'offset') {
+      bits.push(`<span class="unchanged">offset ${number(newValue)}s</span>`);
+    }
+  }
+  return bits.join(' · ');
+}
+
+function formatCause(m) {
+  const cause = m.meta?.cause;
+  if (!cause) return 'message emitted by sender';
+  const summary = escapeHtml(cause.summary ?? 'sender condition');
+  if (!cause.measurement) return summary;
+  const x = cause.measurement, th = cause.threshold;
+  const measure = `${escapeHtml(x.label)}=${number(x.value)}${x.unit ? ` ${escapeHtml(x.unit)}` : ''}`;
+  const threshold = th
+    ? `threshold${th.label ? ` ${escapeHtml(th.label)}` : ''} ${escapeHtml(th.operator ?? '')} ${number(th.value)}${th.unit ? ` ${escapeHtml(th.unit)}` : ''}` : '';
+  const held = Number.isFinite(cause.held) ? `held ${number(cause.held)}s` : '';
+  return `${summary}: <span class="measure">${measure}</span>${threshold || held ? ` <span class="threshold">(${[threshold, held].filter(Boolean).join(', ')})</span>` : ''}`;
+}
+
+function formatEffect(m) {
+  if (m.dropped) return '<span class="bad">not delivered while the central link is down</span>';
+  return escapeHtml(m.meta?.effect?.summary ?? 'receiver inbox updated');
+}
+
 function short(d) {
   return Object.entries(d).map(([k, v]) =>
     `${k}=${typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(1)) : typeof v === 'object' && v ? JSON.stringify(v).slice(0, 40) : v}`).join(' ');
+}
+
+function number(value) {
+  return Number.isFinite(value) ? Number(value).toFixed(1) : '—';
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[ch]);
 }

@@ -6,8 +6,8 @@
 export const MSG = {
   STATUS_UPDATE:     'STATUS_UPDATE',     // local → central: any light-state change {phase, state, mode}
   SET_PLAN:          'SET_PLAN',          // central → local: {plan:'FIXED'|'ACTUATED'|'FLASH', params}
-  TRAIN_APPROACHING: 'TRAIN_APPROACHING', // railway → local(I2/I5): {crossing, eta}
-  GATES_UP:          'GATES_UP',          // railway → local(I2/I5): {crossing}
+  TRAIN_APPROACHING: 'TRAIN_APPROACHING', // railway → protected local: {crossing, eta}
+  GATES_UP:          'GATES_UP',          // railway → protected local: {crossing}
   GATE_FAULT:        'GATE_FAULT',        // railway → central: {crossing}
   CONGESTION_ALARM:  'CONGESTION_ALARM',  // local → central: {approach, q, active:bool}
   PREEMPT:           'PREEMPT',           // central → local: {approach, eta}  (priority vehicle)
@@ -22,11 +22,16 @@ export class MessageBus {
     this.buffered = {};       // localId -> messages held while link down
     this.log = [];            // full traffic, for the event log + audit
     this.onLog = null;
+    this.correlationSeq = 0;  // envelope metadata only; not a protocol type
   }
   register(id) { this.inboxes[id] = []; this.linkUp[id] = true; this.buffered[id] = []; }
 
-  send(from, to, type, data = {}, t = 0) {
-    const msg = { from, to, type, data, t };
+  correlation(prefix = 'EVT') {
+    return `${prefix}-${String(++this.correlationSeq).padStart(3, '0')}`;
+  }
+
+  send(from, to, type, data = {}, t = 0, meta = {}) {
+    const msg = { from, to, type, data, t, meta };
     // central link failure model: traffic between a local and CENTRAL is cut
     const local = from === 'CENTRAL' ? to : to === 'CENTRAL' ? from : null;
     if (local !== null && this.linkUp[local] === false) {

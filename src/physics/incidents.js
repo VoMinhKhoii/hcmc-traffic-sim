@@ -73,7 +73,7 @@ export class IncidentSystem {
   }
 
   // nearest crossing AHEAD of the EV on its route (a passed crossing no longer
-  // matters, and a route may cross both A and B)
+  // matters, and a route may encounter any number of modeled crossings)
   gateAheadOnRoute(ev) {
     let best = null;
     for (let i = 0; i < ev.route.length - 1; i++) {

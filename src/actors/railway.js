@@ -1,7 +1,7 @@
 // @ts-check
 // actors/railway.js — the RailwayController.
-// Owns gates, flashers and the PER-CROSSING train signal at crossings A (I5)
-// and B (I2). Turns raw train events into the protocol messages
+// Owns gates, flashers and the per-crossing train signal for every entry in
+// CROSSINGS. Turns raw train events into the protocol messages
 // TRAIN_APPROACHING / GATES_UP / GATE_FAULT. Traffic lights sense the crossing
 // but never control it (per the brief).
 //
@@ -29,6 +29,7 @@ export class RailwayController {
         flashers: false,
         pendingTrains: 0,       // approach/clear bookkeeping (2-min headways overlap)
         fault: false,
+        correlationId: null,    // one visible chain for this occupied/fault session
       };
     }
   }
@@ -37,12 +38,35 @@ export class RailwayController {
     const c = this.crossings[name];
     if (c.fault) return;
     c.fault = true;
+    c.correlationId ??= this.bus.correlation('RAIL');
+    const faultCause = {
+      summary: `crossing ${name} gate fault asserted`,
+      measurement: { label: 'fault signal', value: 1, unit: '' },
+      threshold: { operator: '≥', value: 1, unit: '' },
+      held: 0,
+    };
     this.trains.redCrossings[name] = true;              // this crossing's signal → RED
-    this.bus.send('RAILWAY', 'CENTRAL', MSG.GATE_FAULT, { crossing: name }, t);
-    this.bus.send('RAILWAY', 'CENTRAL', MSG.ALARM, { kind: 'GATE_JAMMED', detail: `crossing ${name}: trains held at red` }, t);
+    this.bus.send('RAILWAY', 'CENTRAL', MSG.GATE_FAULT, { crossing: name }, t, {
+      correlationId: c.correlationId, root: true, cause: faultCause,
+      effect: { summary: `set crossing ${name} train signal RED and close the road crossing` },
+    });
+    this.bus.send('RAILWAY', 'CENTRAL', MSG.ALARM,
+      { kind: 'GATE_JAMMED', detail: `crossing ${name}: trains held at red` }, t, {
+        correlationId: c.correlationId, parentType: MSG.GATE_FAULT, cause: faultCause,
+        effect: { summary: 'raise an operator-visible alarm in central' },
+      });
     // the protected intersection holds toward-track movements red, and the
     // crossing physically closes to road traffic
-    this.bus.send('RAILWAY', CROSSINGS[name].intersection, MSG.TRAIN_APPROACHING, { crossing: name, eta: 0 }, t);
+    this.bus.send('RAILWAY', CROSSINGS[name].intersection, MSG.TRAIN_APPROACHING,
+      { crossing: name, eta: 0 }, t, {
+        correlationId: c.correlationId, parentType: MSG.GATE_FAULT, cause: {
+          summary: `faulted crossing ${name} requires an immediate rail hold`,
+          measurement: { label: 'eta', value: 0, unit: 's' },
+          threshold: { operator: '≤', value: CONFIG.trainWarning, unit: 's' },
+          held: 0,
+        },
+        effect: { summary: 'enter rail FLUSH, then HOLD movements toward the tracks red' },
+      });
     if (c.state === 'OPEN' || c.state === 'RAISING') { c.state = 'LOWERING'; c.stateT = 0; c.flashers = true; }
   }
 
@@ -55,7 +79,7 @@ export class RailwayController {
       if (c.state === 'CLOSED' || c.state === 'LOWERING') this.openGates(name);
       else if (c.state === 'OPEN') {                     // gates never moved: still release the hold
         c.flashers = false;
-        this.bus.send('RAILWAY', CROSSINGS[name].intersection, MSG.GATES_UP, { crossing: name }, t);
+        this.sendGatesUp(name, t);
       }
     }
   }
@@ -64,11 +88,22 @@ export class RailwayController {
     for (const ev of trainEvents) {
       const c = this.crossings[ev.crossing];
       if (ev.type === 'APPROACH') {
+        c.correlationId ??= this.bus.correlation('RAIL');
         c.pendingTrains++;
         c.flashers = true;
         if (c.state === 'OPEN' || c.state === 'RAISING') { c.state = 'LOWERING'; c.stateT = 0; }
         this.bus.send('RAILWAY', CROSSINGS[ev.crossing].intersection, MSG.TRAIN_APPROACHING,
-          { crossing: ev.crossing, eta: ev.eta }, t);
+          { crossing: ev.crossing, eta: ev.eta }, t, {
+            correlationId: c.correlationId,
+            root: c.pendingTrains === 1,
+            cause: {
+              summary: `train ${ev.train} entered the warning window for crossing ${ev.crossing}`,
+              measurement: { label: 'eta', value: rounded(ev.eta), unit: 's' },
+              threshold: { operator: '≤', value: CONFIG.trainWarning, unit: 's' },
+              held: 0,
+            },
+            effect: { summary: 'enter rail FLUSH, then HOLD movements toward the tracks red' },
+          });
       } else if (ev.type === 'CLEAR') {
         c.pendingTrains = Math.max(0, c.pendingTrains - 1);
         if (c.pendingTrains === 0 && !c.fault) this.openGates(ev.crossing);
@@ -85,7 +120,7 @@ export class RailwayController {
         } else {
           c.state = 'OPEN'; c.flashers = false;
           this.model.setGate(name, false, t);            // road entry reopens only NOW
-          this.bus.send('RAILWAY', CROSSINGS[name].intersection, MSG.GATES_UP, { crossing: name }, t);
+          this.sendGatesUp(name, t);
         }
       }
     }
@@ -96,6 +131,23 @@ export class RailwayController {
     if (c.state === 'CLOSED' || c.state === 'LOWERING') { c.state = 'RAISING'; c.stateT = 0; }
   }
 
+  sendGatesUp(name, t) {
+    const c = this.crossings[name];
+    this.bus.send('RAILWAY', CROSSINGS[name].intersection, MSG.GATES_UP,
+      { crossing: name }, t, {
+        correlationId: c.correlationId,
+        parentType: MSG.TRAIN_APPROACHING,
+        cause: {
+          summary: `crossing ${name} gates reached fully open`,
+          measurement: { label: 'gate travel', value: CONFIG.gateTime, unit: 's' },
+          threshold: { operator: '≥', value: CONFIG.gateTime, unit: 's' },
+          held: CONFIG.gateTime,
+        },
+        effect: { summary: 'release the rail hold and recover into the commanded plan' },
+      });
+    c.correlationId = null;
+  }
+
   gatesDown() {
     const g = {};
     for (const [n, c] of Object.entries(this.crossings))
@@ -103,3 +155,5 @@ export class RailwayController {
     return g;
   }
 }
+
+function rounded(n) { return Math.round(n * 10) / 10; }

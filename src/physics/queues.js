@@ -45,14 +45,15 @@ export class TrafficModel {
     // pocket bookkeeping: vehicles between stop line and tracks. Arrivals while
     // the gates are down wait at the GATE (far side), so they are not in the
     // pocket — we snapshot the pocket at gate-close and only let it shrink.
-    this.pocket = { A: { closed: false, q: 0 }, B: { closed: false, q: 0 } };
+    this.pocket = Object.fromEntries(Object.keys(CROSSINGS)
+      .map((name) => [name, { closed: false, q: 0 }]));
   }
 
   ap(node, dir) { return this.approaches[`${node}:${dir}`]; }
 
   // ---- one physics step -------------------------------------------------
   // lights: { I1: {state:'GREEN'|'YELLOW'|'ALLRED'|'FLASH', green:'A'|'B'|null}, ... }
-  // gatesDown: {A:bool, B:bool}; trainAt: {A:bool, B:bool} (train occupying crossing zone)
+  // gatesDown/trainAt are keyed by every name in CROSSINGS.
   step(dt, t, mode, lights, gatesDown = {}, trainAt = {}) {
     // 1) external arrivals
     for (const a of Object.values(this.approaches)) {
@@ -129,7 +130,7 @@ export class TrafficModel {
       const p = this.pocket[name];
       if (p.closed) p.q = Math.min(p.q, a.q);        // discharge shrinks it; gate-side arrivals don't grow it
       const qMeters = (p.q * CONFIG.vehicleLength) / CONFIG.lanes;
-      if (trainAt[name] && qMeters > CONFIG.crossingPocket)
+      if (trainAt[name] && qMeters > c.pocketLength)
         this.safetyViolations.push({ t, crossing: name, qMeters });
     }
   }
@@ -150,7 +151,8 @@ export class TrafficModel {
         for (const e of pipe.entries)
           if (e.held) {
             e.arriveAt = t + (e.arriveAt - e.enterT) * (1 - pipe.crossFrac);
-            e.enterT = t - 1;   // keep render progress sane
+            e.enterT = t;
+            e.fromFrac = pipe.crossFrac;   // renderer: resume FROM the gate, not the link start
             e.held = false;
           }
       }

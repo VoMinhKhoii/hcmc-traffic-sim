@@ -1,5 +1,5 @@
 // @ts-check
-// verify.js — the 18-scenario verification matrix (plan §Verification).
+// verify.js — verification matrix (plan §Verification).
 // Run:  node verify.js          (all scenarios)
 //       node verify.js 8 11     (selected)
 // Prints PASS/FAIL per scenario; exits non-zero on any FAIL.
@@ -196,8 +196,10 @@ scenario(9, 'Back-to-back trains (2-min headway) handled cleanly', () => {
   sim.forceTrain(-1);
   sim.run(600);
   assert(sim.model.safetyViolations.length === 0, 'track spillback');
-  assert(sim.railway.crossings.A.state === 'OPEN' && sim.railway.crossings.B.state === 'OPEN', 'gates stuck');
-  assert(sim.locals.I5.overlay.rail === null && sim.locals.I2.overlay.rail === null, 'preempt stuck');
+  for (const [name, c] of Object.entries(CROSSINGS)) {
+    assert(sim.railway.crossings[name].state === 'OPEN', `${name} gates stuck`);
+    assert(sim.locals[c.intersection].overlay.rail === null, `${c.intersection} preempt stuck`);
+  }
   assert(sim.conflictViolations === 0, 'conflicting greens');
 });
 
@@ -330,7 +332,7 @@ scenario(16, 'Jam gate: train signal RED, alarm, toward-track reds, train stops'
   let minDist = Infinity;
   for (let i = 0; i < 6000; i++) {
     sim.step();
-    for (const tr of sim.trains.trains) minDist = Math.min(minDist, RAIL.sA - tr.s);
+    for (const tr of sim.trains.trains) minDist = Math.min(minDist, RAIL.s('A') - tr.s);
   }
   assert(minDist > 0, `train entered jammed crossing (got ${minDist.toFixed(0)}m past stop)`);
   // toward-track approaches held red: I5 sits in HOLD (phase B green at most)
@@ -405,7 +407,7 @@ scenario(21, 'Gates stay down (and entry closed) until train fully clear', () =>
   sim.forceTrain(1);
   for (let i = 0; i < 12000; i++) {
     sim.step();
-    for (const name of ['A', 'B']) {
+    for (const name of Object.keys(CROSSINGS)) {
       const st = sim.railway.crossings[name].state;
       if (sim.trains.occupying(name))
         assert(st === 'CLOSED' || st === 'LOWERING', `${name} ${st} while train occupies crossing`);
@@ -461,6 +463,107 @@ scenario(24, 'Platoon inside link when gates close waits at the gate', () => {
   sim.model.setGate('A', false, sim.t);
   sim.run(travel);
   assert(!pipe.entries.includes(marked), 'held platoon never delivered after reopen');
+});
+
+scenario(25, 'Crossing C: I1 train preemption, safe greens, no vehicles on tracks', () => {
+  const sim = fresh(7, { noTrains: true });
+  sim.run(120);
+  sim.forceTrain(1);
+  let preempted = false, flushed = false, held = false, gatesClosed = false;
+  for (let i = 0; i < 12000; i++) {
+    sim.step();
+    const rail = sim.locals.I1.overlay.rail;
+    const machine = sim.locals.I1.machine;
+    if (rail?.crossing === 'C') {
+      preempted = true;
+      if (rail.stage === 'FLUSH') flushed = true;
+      if (rail.stage === 'HOLD') held = true;
+    }
+    if (sim.trains.occupying('C'))
+      assert(!(machine.state === 'GREEN' && machine.phase === 'A'),
+        'I1 toward-track phase green while train occupies C');
+    if (sim.railway.crossings.C.state === 'CLOSED') gatesClosed = true;
+  }
+  assert(preempted && flushed && held, 'I1 did not complete C FLUSH → HOLD preemption');
+  assert(gatesClosed, 'C gates never closed');
+  assert(sim.bus.log.some((m) => m.type === MSG.TRAIN_APPROACHING
+    && m.to === 'I1' && m.data.crossing === 'C'), 'no C approach message to I1');
+  assert(sim.model.safetyViolations.every((v) => v.crossing !== 'C'),
+    'vehicle queue occupied crossing C under train');
+  assert(sim.conflictViolations === 0, 'conflicting green during C preemption');
+  assert(sim.locals.I1.overlay.rail === null, 'I1 C preemption never recovered');
+  assert(sim.railway.crossings.C.state === 'OPEN', 'C gates never reopened');
+});
+
+scenario(26, 'Jam gate C: C signal red, I1 holds, train stops and fault recovers', () => {
+  const sim = fresh(7, { noTrains: true });
+  sim.trains.signalRed = true;
+  assert(Object.values(sim.trains.redCrossings).every(Boolean),
+    'legacy signalRed setter did not set every crossing');
+  sim.trains.signalRed = false;
+  assert(Object.values(sim.trains.redCrossings).every((red) => !red),
+    'legacy signalRed setter did not clear every crossing');
+  sim.run(60);
+  sim.jamGate('C');
+  assert(sim.trains.redCrossings.C && sim.trains.signalRed, 'C train signal not red');
+  sim.run(10);
+  assert(sim.central.alarms.some((a) => a.kind === 'GATE_FAULT'), 'no C gate-fault alarm');
+  sim.forceTrain(1);
+  let minDistance = Infinity;
+  for (let i = 0; i < 6000; i++) {
+    sim.step();
+    for (const tr of sim.trains.trains)
+      minDistance = Math.min(minDistance, RAIL.s('C') - tr.s);
+  }
+  assert(minDistance > 0, `train entered jammed C crossing (${minDistance.toFixed(1)} m)`);
+  const m = sim.locals.I1.machine;
+  assert(sim.locals.I1.overlay.rail?.crossing === 'C', 'I1 not holding for C fault');
+  assert(!(m.state === 'GREEN' && m.phase === 'A'), 'toward-track phase green during C fault');
+  assert(sim.model.safetyViolations.every((v) => v.crossing !== 'C'),
+    'vehicle queue occupied faulted crossing C');
+  assert(sim.conflictViolations === 0, 'conflicting green during C fault');
+  sim.clearGateFault('C');
+  sim.run(600);
+  assert(!sim.trains.redCrossings.C && !sim.trains.signalRed, 'C signal stayed red after repair');
+  assert(sim.locals.I1.overlay.rail === null, 'I1 hold never released after C repair');
+  assert(sim.railway.crossings.C.state === 'OPEN', 'C gates never reopened after repair');
+});
+
+scenario(27, 'Peak congestion flexes own split and restores an external approach', () => {
+  const previousMultiplier = CONFIG.demandMultiplier;
+  CONFIG.demandMultiplier = 1.5;
+  try {
+    const sim = fresh(7);
+    sim.run(1);
+    const baseline = { ...sim.locals.I5.plan.params };
+    let alarm = null;
+    for (let i = 0; i < 6000 && !alarm; i++) {
+      sim.step();
+      alarm = sim.bus.log.find((m) => m.type === MSG.CONGESTION_ALARM
+        && m.from === 'I5' && m.data.approach === 'E' && m.data.active);
+    }
+    assert(alarm, 'I5:E external congestion alarm never fired');
+    sim.step(); // central consumes the alarm and the local consumes SET_PLAN
+    const adjusted = [...sim.bus.log].reverse().find((m) => m.type === MSG.SET_PLAN
+      && m.to === 'I5' && m.t >= alarm.t && m.data.plan === 'FIXED');
+    assert(adjusted, 'congested node I5 did not receive its own SET_PLAN');
+    assert(adjusted.data.params.greenA > baseline.greenA,
+      `I5 phase A did not gain green (${baseline.greenA.toFixed(1)} → ${adjusted.data.params.greenA.toFixed(1)})`);
+    assert(Math.abs(adjusted.data.params.cycle - baseline.cycle) < 1e-9,
+      `coordinated cycle changed (${baseline.cycle} → ${adjusted.data.params.cycle})`);
+    assert(!sim.central.metered.has('I5'), 'external-only I5:E response incorrectly marked I5 as metered');
+
+    CONFIG.demandMultiplier = 0;
+    for (let i = 0; i < 12000 && Object.keys(sim.central.congested).length; i++) sim.step();
+    assert(Object.keys(sim.central.congested).length === 0, 'I5:E alarm never cleared');
+    assert(Math.abs(sim.locals.I5.plan.params.greenA - baseline.greenA) < 1e-9
+      && Math.abs(sim.locals.I5.plan.params.greenB - baseline.greenB) < 1e-9,
+      'self-retimed I5 did not restore its baseline Webster split');
+    assert(!sim.central.retimed.has('I5'), 'restored self-retimed node remains in bookkeeping');
+    return `I5 A ${baseline.greenA.toFixed(1)}→${adjusted.data.params.greenA.toFixed(1)}→${sim.locals.I5.plan.params.greenA.toFixed(1)}s; cycle ${baseline.cycle.toFixed(1)}s`;
+  } finally {
+    CONFIG.demandMultiplier = previousMultiplier;
+  }
 });
 
 scenario(18, 'Architecture audit: all coordination via the 9 typed messages', () => {

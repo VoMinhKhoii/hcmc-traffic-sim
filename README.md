@@ -37,14 +37,14 @@ src/actors/local/  controller, phases (signal state machine), plans
 src/actors/        central.js (control room), railway.js (gates/flashers/signal)
 src/ui/            render (canvas), controls (operator console), eventlog
 src/main.js        wiring + headless-capable Simulation class
-verify.js          the 18-scenario verification matrix
+verify.js          the verification matrix
 ```
 
 ## Demo script (15-minute presentation order)
 
 1. Peak 07:00 at 30×: green waves along Nguyễn Văn Trỗi → Trần Huy Liệu
    (I3→I5→I6→I4), WALK each cycle, trains every 2 min with full preemption
-   at I5 (crossing A) and I2 (crossing B).
+   at I5 (crossing A), I1 (crossing C), and I2 (crossing B).
 2. `EV I1→I2→I4`: watch the green wave roll ahead of the ambulance.
 3. `Accident I2→I4`: queues build → CONGESTION_ALARM → central meters I1 →
    recovery. Point at the message log while it happens.
@@ -52,4 +52,5 @@ verify.js          the 18-scenario verification matrix
 5. Jump to 23:30: flashing yellow/red; force a train → I5 exits flash into
    preemption and returns.
 6. `Kill central`: locals keep running, messages buffer; restore → resync.
-7. `Jam gate A`: train signal RED, alarm in control room, train held.
+7. `Jam gate A/B/C`: the affected train signal turns RED, the control room
+   alarms, and the train is held before that crossing.

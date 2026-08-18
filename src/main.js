@@ -4,7 +4,7 @@
 // Headless-friendly: no DOM here; ui/ imports this and drives it.
 
 import { CONFIG } from './config.js';
-import { INTERSECTIONS } from './network.js';
+import { INTERSECTIONS, CROSSINGS } from './network.js';
 import { SimClock } from './clock.js';
 import { TrafficModel } from './physics/queues.js';
 import { TrainSystem } from './physics/trains.js';
@@ -41,7 +41,8 @@ export class Simulation {
     this.incidents.step(dt, t, gatesDown);
     const lights = {};
     for (const [n, lc] of Object.entries(this.locals)) lights[n] = lc.lights();
-    const trainAt = { A: this.trains.occupying('A'), B: this.trains.occupying('B') };
+    const trainAt = Object.fromEntries(Object.keys(CROSSINGS)
+      .map((name) => [name, this.trains.occupying(name)]));
     this.model.step(dt, t, mode, lights, gatesDown, trainAt);
 
     // EV progress events → central issues RESUME per intersection

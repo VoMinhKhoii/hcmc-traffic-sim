@@ -3,6 +3,7 @@
 // the scenario buttons from the verification matrix.
 
 import { CONFIG } from '../config.js';
+import { CROSSINGS } from '../network.js';
 
 export function buildControls(root, sim) {
   root.innerHTML = `
@@ -24,8 +25,8 @@ export function buildControls(root, sim) {
       <button id="b-train1">Force train ↘</button><button id="b-train2">Force train ↖</button></div>
     <div class="grp"><label>Failures</label>
       <button id="b-kill" class="warn">Kill central</button>
-      <button id="b-jamA" class="warn">Jam gate A</button>
-      <button id="b-jamB" class="warn">Jam gate B</button></div>
+      ${Object.keys(CROSSINGS).map((name) =>
+        `<button id="b-jam${name}" class="warn">Jam gate ${name}</button>`).join('')}</div>
     <div class="grp dim">Pedestrian buttons + per-light state: click an
       intersection on the map to open its local controller.</div>`;
 
@@ -45,7 +46,7 @@ export function buildControls(root, sim) {
     if (sim.centralAlive) { sim.killCentral(); kill.textContent = 'Restore central'; kill.classList.add('active'); }
     else { sim.restoreCentral(); kill.textContent = 'Kill central'; kill.classList.remove('active'); }
   };
-  for (const name of ['A', 'B']) {
+  for (const name of Object.keys(CROSSINGS)) {
     const b = $(`#b-jam${name}`);
     b.onclick = () => {
       const c = sim.railway.crossings[name];

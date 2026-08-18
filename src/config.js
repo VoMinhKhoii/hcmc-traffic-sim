@@ -28,20 +28,20 @@ export const CONFIG = {
   congestionThreshold: 25,  // veh queued on one approach
   congestionPersist: 20,    // s above threshold before alarm
   congestionClear: 15,      // veh to clear alarm (hysteresis)
+  congestionGreenShift: 8,  // s transferred to an alarmed phase; cycle stays fixed
 
   // railway
   trainWarning: 30,     // s before train reaches a crossing
   gateTime: 8,          // s for gates to lower/raise
   trainSpeedKmh: 60,
   headway: { PEAK: 120, OFFPEAK: 600, NIGHT: 1200 }, // s between trains
-  crossingPocket: 110,  // m from crossing to stop line at I2/I5
 
   // incidents
   accidentDuration: 300,   // s default
 
   // demand λ (veh/s per approach) by road class and mode
   // calibrated so the network is BUSY but stable at peak even though rail
-  // preemption steals green time at I5/I2 every 2 minutes (see TIMINGS.md §5)
+  // preemption steals green time at I1/I2/I5 every 2 minutes (see TIMINGS.md §5)
   demand: {
     PEAK:    { main: 0.25, side: 0.10 },
     OFFPEAK: { main: 0.15, side: 0.06 },

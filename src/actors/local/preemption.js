@@ -2,7 +2,7 @@
 // actors/local/preemption.js — overlays that OUTRANK the running plan.
 // Priority order (fixed, stated in the report): TRAIN > EV > normal plan.
 //
-// Rail preemption at I2/I5 (the crossing sits 110 m from the stop line):
+// Rail preemption at every intersection named by CROSSINGS:
 //   FLUSH — green for the pocket phase so vehicles trapped between stop line
 //           and tracks clear through the intersection. Physics already blocks
 //           entry TOWARD the closed gates, so this green cannot feed the tracks.
@@ -24,16 +24,24 @@ export class PreemptionOverlay {
     this.ev = null;     // {approach, eta, active:bool}
     this.recoveryUntil = 0;   // boost first greens after an overlay ends
     // which of this node's phases feeds/drains the crossing (null if none)
-    const c = Object.values(CROSSINGS).find((c) => c.intersection === node);
+    const entry = Object.entries(CROSSINGS).find(([, c]) => c.intersection === node);
+    this.railCrossing = entry?.[0] ?? null;
+    const c = entry?.[1];
     this.pocketPhase = c ? (PHASES.A.includes(c.pocketApproach) ? 'A' : 'B') : null;
   }
 
-  onTrainApproaching(crossing, t) { if (this.pocketPhase) this.rail = { crossing, stage: 'FLUSH', t0: t }; }
-  onGatesUp(t) {
+  onTrainApproaching(crossing, t, meta = {}) {
+    if (crossing === this.railCrossing) this.rail = {
+      crossing, stage: 'FLUSH', t0: t, meta,
+    };
+  }
+  onGatesUp(t, meta = {}) {
     if (this.rail) { this.rail = null; this.recoveryUntil = t + 30; }
   }
-  onPreempt(approach, eta) { this.ev = { approach, eta, active: false }; }
-  onResume(t) { if (this.ev) { this.ev = null; this.recoveryUntil = t + 30; } }
+  onPreempt(approach, eta, meta = {}, commandedAt = 0) {
+    this.ev = { approach, eta, active: false, meta, commandedAt };
+  }
+  onResume(t, meta = {}) { if (this.ev) { this.ev = null; this.recoveryUntil = t + 30; } }
 
   /**
    * Apply the overlay. Returns true if it controlled the machine this tick

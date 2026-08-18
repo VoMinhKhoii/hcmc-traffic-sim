@@ -20,9 +20,15 @@ export class LocalController {
     this.machine = new SignalMachine(node);
     this.overlay = new PreemptionOverlay(node);
     this.plan = { type: 'ACTUATED', params: {} };   // safe default before first SET_PLAN
+    this.planCommand = { from: 'LOCAL', t: 0, meta: {
+      cause: { summary: 'safe startup default' },
+      effect: { summary: 'run actuated control until central commands a plan' },
+    } };
     this.mem = {};                                   // plan scratch (flash cycle etc.)
     this.congestion = {};                            // dir -> {since, alarmed}
-    for (const d of DIRS) this.congestion[d] = { since: null, alarmed: false };
+    for (const d of DIRS) this.congestion[d] = {
+      since: null, alarmed: false, alarmedAt: null, correlationId: null,
+    };
   }
 
   /** @param {number} t @param {number} dt @param {object} sensors sensor view from physics */
@@ -30,11 +36,14 @@ export class LocalController {
     // 1) inbox
     for (const m of this.bus.drain(this.node)) {
       switch (m.type) {
-        case MSG.SET_PLAN: this.plan = { type: m.data.plan, params: m.data.params ?? {} }; break;
-        case MSG.TRAIN_APPROACHING: this.overlay.onTrainApproaching(m.data.crossing, t); break;
-        case MSG.GATES_UP: this.overlay.onGatesUp(t); break;
-        case MSG.PREEMPT: this.overlay.onPreempt(m.data.approach, m.data.eta); break;
-        case MSG.RESUME: this.overlay.onResume(t); break;
+        case MSG.SET_PLAN:
+          this.plan = { type: m.data.plan, params: m.data.params ?? {} };
+          this.planCommand = { from: m.from, t: m.t, meta: m.meta };
+          break;
+        case MSG.TRAIN_APPROACHING: this.overlay.onTrainApproaching(m.data.crossing, t, m.meta); break;
+        case MSG.GATES_UP: this.overlay.onGatesUp(t, m.meta); break;
+        case MSG.PREEMPT: this.overlay.onPreempt(m.data.approach, m.data.eta, m.meta, m.t); break;
+        case MSG.RESUME: this.overlay.onResume(t, m.meta); break;
       }
     }
 
@@ -76,13 +85,34 @@ export class LocalController {
         c.since ??= t;
         if (!c.alarmed && t - c.since >= CONFIG.congestionPersist) {
           c.alarmed = true;
-          this.bus.send(this.node, 'CENTRAL', MSG.CONGESTION_ALARM, { approach: d, q: Math.round(q), active: true }, t);
+          c.alarmedAt = t;
+          c.correlationId = this.bus.correlation('CONG');
+          const held = t - c.since;
+          this.bus.send(this.node, 'CENTRAL', MSG.CONGESTION_ALARM,
+            { approach: d, q: rounded(q), active: true }, t, {
+              correlationId: c.correlationId,
+              root: true,
+              cause: numericCause('queue', q, 'veh', '≥', CONFIG.congestionThreshold, held,
+                `${d} queue stayed above the congestion threshold`),
+              effect: { summary: 'ask central to increase discharge and meter any upstream feeder' },
+            });
         }
       } else if (q <= CONFIG.congestionClear) {
+        const held = c.since === null ? 0 : t - c.since;
         c.since = null;
         if (c.alarmed) {
           c.alarmed = false;
-          this.bus.send(this.node, 'CENTRAL', MSG.CONGESTION_ALARM, { approach: d, q: Math.round(q), active: false }, t);
+          this.bus.send(this.node, 'CENTRAL', MSG.CONGESTION_ALARM,
+            { approach: d, q: rounded(q), active: false }, t, {
+              correlationId: c.correlationId,
+              root: true,
+              cause: numericCause('queue', q, 'veh', '≤', CONFIG.congestionClear, held,
+                `${d} queue crossed the clear threshold`),
+              effect: { summary: 'ask central to restore the normal coordinated split' },
+              role: 'clear',
+            });
+          c.alarmedAt = null;
+          c.correlationId = null;
         }
       }
     }
@@ -92,10 +122,24 @@ export class LocalController {
       this.bus.send(this.node, 'CENTRAL', MSG.STATUS_UPDATE, {
         state: this.machine.state, phase: this.machine.phase,
         plan: this.plan.type, preempt: this.overlay.active(),
-      }, t);
+      }, t, {
+        cause: { summary: `local signal changed to ${this.machine.state}${this.machine.state === 'GREEN' ? ` ${this.machine.phase}` : ''}` },
+        effect: { summary: 'update the central status board' },
+      });
     }
     return servedDirs;
   }
 
   lights() { return this.machine.view(); }
+}
+
+function rounded(n) { return Math.round(n * 10) / 10; }
+
+function numericCause(label, value, unit, operator, threshold, held, summary) {
+  return {
+    summary,
+    measurement: { label, value: rounded(value), unit },
+    threshold: { operator, value: threshold, unit },
+    held,
+  };
 }
