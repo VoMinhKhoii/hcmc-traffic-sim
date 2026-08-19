@@ -9,13 +9,16 @@
 //   HOLD  — green for the cross street while the train passes; all movements
 //           toward the tracks stay red.
 //   ends on GATES_UP → recovery boost repays the held queues.
+//   A BROKEN crossing sends eta = 0, which enters HOLD directly and stays there
+//   until the crossing is repaired — there is no flush for a crossing we cannot
+//   prove is protected.
 //
 // EV preemption: PREEMPT{approach, eta} from central. The local schedules its
 // own safe transition so the EV's approach is green by eta − evHoldLead, holds
 // until RESUME.
 
 import { CONFIG } from '../../config.js';
-import { PHASES, CROSSINGS } from '../../network.js';
+import { PHASES, CROSSINGS, APPROACHES, OPPOSITE } from '../../network.js';
 
 export class PreemptionOverlay {
   constructor(node) {
@@ -23,20 +26,30 @@ export class PreemptionOverlay {
     this.rail = null;   // {crossing, stage:'FLUSH'|'HOLD', t0}
     this.ev = null;     // {approach, eta, active:bool}
     this.recoveryUntil = 0;   // boost first greens after an overlay ends
-    // which of this node's phases feeds/drains the crossing (null if none)
-    const entry = Object.entries(CROSSINGS).find(([, c]) => c.intersection === node);
-    this.railCrossing = entry?.[0] ?? null;
-    const c = entry?.[1];
-    this.pocketPhase = c ? (PHASES.A.includes(c.pocketApproach) ? 'A' : 'B') : null;
+    // A BROKEN crossing holds the movement feeding its link at BOTH ends.
+    // Map crossing -> phase which discharges into that link from this node.
+    this.railPhases = {};
+    for (const [name, c] of Object.entries(CROSSINGS)) {
+      const linkApproach = Object.entries(APPROACHES[node])
+        .find(([, ap]) => ap.link === c.link)?.[0];
+      if (!linkApproach) continue;
+      const feedingApproach = OPPOSITE[linkApproach];
+      this.railPhases[name] = PHASES.A.includes(feedingApproach) ? 'A' : 'B';
+    }
   }
 
-  onTrainApproaching(crossing, t, meta = {}) {
-    if (crossing === this.railCrossing) this.rail = {
-      crossing, stage: 'FLUSH', t0: t, meta,
+  onTrainApproaching(crossing, eta, t, meta = {}) {
+    if (this.railPhases[crossing]) this.rail = {
+      crossing, stage: eta <= 0 ? 'HOLD' : 'FLUSH', t0: t, meta,
     };
   }
-  onGatesUp(t, meta = {}) {
-    if (this.rail) { this.rail = null; this.recoveryUntil = t + 30; }
+  onGatesUp(t, meta = {}, crossing = null) {
+    // Only the crossing that raised this hold may release it. Today the endpoint
+    // pairs are disjoint so any message would be the right one, but that is a
+    // property of the current map, not of the design.
+    if (!this.rail) return;
+    if (crossing && this.rail.crossing !== crossing) return;
+    this.rail = null; this.recoveryUntil = t + 30;
   }
   onPreempt(approach, eta, meta = {}, commandedAt = 0) {
     this.ev = { approach, eta, active: false, meta, commandedAt };
@@ -49,10 +62,11 @@ export class PreemptionOverlay {
    */
   step(machine, sensors, t) {
     if (this.rail) {
-      const holdPhase = this.pocketPhase === 'A' ? 'B' : 'A';
+      const feedingPhase = this.railPhases[this.rail.crossing];
+      const holdPhase = feedingPhase === 'A' ? 'B' : 'A';
       if (this.rail.stage === 'FLUSH') {
-        machine.requestPhase(this.pocketPhase);
-        const pocketDirs = PHASES[this.pocketPhase];
+        machine.requestPhase(feedingPhase);
+        const pocketDirs = PHASES[feedingPhase];
         const pocketEmpty = pocketDirs.every((d) => sensors[d].q < 0.5);
         if (t - this.rail.t0 >= CONFIG.pocketFlush || pocketEmpty) this.rail.stage = 'HOLD';
       } else {

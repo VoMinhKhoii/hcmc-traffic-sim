@@ -172,13 +172,14 @@ export function draw(ctx, sim) {
     const x = A.x + (B.x - A.x) * c.pos, y = A.y + (B.y - A.y) * c.pos;
     const roadAng = Math.atan2(B.y - A.y, B.x - A.x);
     const cr = sim.railway.crossings[name];
-    const down = cr.state !== 'OPEN' || cr.fault;
+    const down = cr.state !== 'OPEN';
+    const arm = barrierDownFraction(cr, t);
     ctx.save(); ctx.translate(x, y); ctx.rotate(roadAng);
     ctx.lineCap = 'round';
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 7.5;   // halo separates gates from train
-    gateBars(ctx, down);
-    ctx.strokeStyle = down || cr.fault ? COL.red : COL.green; ctx.lineWidth = 4.5;
-    gateBars(ctx, down);
+    gateBars(ctx, arm);
+    ctx.strokeStyle = down ? COL.red : COL.green; ctx.lineWidth = 4.5;   // BROKEN implies down
+    gateBars(ctx, arm);
     ctx.lineCap = 'butt';
     if (cr.flashers && Math.floor(t * 2) % 2 === 0) {
       ctx.fillStyle = COL.red;
@@ -190,11 +191,13 @@ export function draw(ctx, sim) {
     // boxes keep crossing names clear of roads, street names, the rail name,
     // and crossing labels selected earlier in this pass.
     const text = `Crossing ${name}`;
-    const pos = crossingLabelPosition(ctx, { x, y }, text, down, cr.fault,
+    const indication = cr.fault || cr.armFailed;
+    const pos = crossingLabelPosition(ctx, { x, y }, text, down, indication,
       ru, rn, roads, placedLabels);
     label(ctx, pos.x, pos.y, text, down ? COL.red : COL.label,
       11, down, 'center', 'middle');
-    if (cr.fault) label(ctx, pos.x, pos.y + 14, 'GATE FAULT', COL.red,
+    if (indication) label(ctx, pos.x, pos.y + 14,
+      cr.fault ? 'GATE FAULT' : 'ARM FAILED', cr.fault ? COL.red : '#e65100',
       11, true, 'center', 'middle');
     placedLabels.push(pos.box);
   }
@@ -260,15 +263,23 @@ function drawHead(ctx, node, d, p, w, rside, L, t) {
   });
 }
 
-function gateBars(ctx, down) {
-  ctx.beginPath();
-  if (down) {   // barriers ACROSS the road, one per side
-    ctx.moveTo(-HALF + 2, -HALF); ctx.lineTo(-HALF + 2, HALF);
-    ctx.moveTo(HALF - 2, -HALF); ctx.lineTo(HALF - 2, HALF);
-  } else {      // barriers raised: short stubs beside the road
-    ctx.moveTo(-HALF + 2, -HALF - 10); ctx.lineTo(-HALF + 2, -HALF + 2);
-    ctx.moveTo(HALF - 2, HALF + 10); ctx.lineTo(HALF - 2, HALF - 2);
+function barrierDownFraction(c, t) {
+  if (c.renderAction === 'DOWN') {
+    const animationT = c.armFailed && !c.provedDown
+      ? Math.min(t, c.armFailedAt ?? t) : t;
+    return clamp((animationT - c.renderActionAt) / CONFIG.barrierTravel, 0, 1);
   }
+  return 1 - clamp((t - c.renderActionAt) / CONFIG.barrierTravel, 0, 1);
+}
+
+function gateBars(ctx, downFraction) {
+  const f = clamp(downFraction, 0, 1);
+  const mix = (up, down) => up + (down - up) * f;
+  ctx.beginPath();
+  ctx.moveTo(-HALF + 2, mix(-HALF - 10, -HALF));
+  ctx.lineTo(-HALF + 2, mix(-HALF + 2, HALF));
+  ctx.moveTo(HALF - 2, mix(HALF + 10, -HALF));
+  ctx.lineTo(HALF - 2, mix(HALF - 2, HALF));
   ctx.stroke();
 }
 

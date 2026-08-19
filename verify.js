@@ -321,21 +321,30 @@ scenario(15, 'Kill central during preemption: sequence completes safely', () => 
   assert(['GREEN', 'YELLOW', 'ALLRED', 'FLASH'].includes(m.state), 'invalid state');
 });
 
-scenario(16, 'Jam gate: train signal RED, alarm, toward-track reds, train stops', () => {
+scenario(16, 'Jam injection waits for a close command, then fails safe', () => {
+  // Pin repair off: this scenario tests the MANUAL clear path, and must not
+  // silently depend on gateRepairMin being longer than its own run window.
+  const oldMin = CONFIG.gateRepairMin, oldMax = CONFIG.gateRepairMax;
+  CONFIG.gateRepairMin = CONFIG.gateRepairMax = 1e9;
+  try {
   const sim = fresh(7, { noTrains: true });
   sim.run(60);
   sim.jamGate('A');
-  assert(sim.trains.signalRed, 'train signal not red');
-  sim.run(10);
-  assert(sim.central.alarms.some((a) => a.kind === 'GATE_FAULT'), 'no GATE_FAULT alarm at control room');
+  assert(sim.railway.crossings.A.armFailed, 'physical arm-failure indication absent');
+  assert(sim.railway.crossings.A.state === 'OPEN', 'idle injection declared a fault');
+  assert(!sim.trains.signalRed, 'idle injection set the train signal red');
+  assert(!sim.central.alarms.some((a) => a.kind === 'GATE_FAULT'), 'idle injection raised an alarm');
   sim.forceTrain(1);
+  sim.run(25);
+  assert(sim.railway.crossings.A.state === 'BROKEN', 'failure to prove did not declare BROKEN');
+  assert(sim.trains.signalRed, 'declared fault did not set train signal red');
+  assert(sim.central.alarms.some((a) => a.kind === 'GATE_FAULT'), 'no GATE_FAULT alarm at control room');
   let minDist = Infinity;
-  for (let i = 0; i < 6000; i++) {
+  for (let i = 0; i < 1200; i++) {
     sim.step();
     for (const tr of sim.trains.trains) minDist = Math.min(minDist, RAIL.s('A') - tr.s);
   }
-  assert(minDist > 0, `train entered jammed crossing (got ${minDist.toFixed(0)}m past stop)`);
-  // toward-track approaches held red: I5 sits in HOLD (phase B green at most)
+  assert(minDist >= 79.9, `train passed the protecting signal (${minDist.toFixed(1)}m short)`);
   const m = sim.locals.I5.machine;
   assert(sim.locals.I5.overlay.rail !== null, 'I5 not holding for the fault');
   assert(!(m.state === 'GREEN' && m.phase === 'A'), 'toward-track movement green during fault');
@@ -343,6 +352,7 @@ scenario(16, 'Jam gate: train signal RED, alarm, toward-track reds, train stops'
   sim.run(600);
   assert(!sim.trains.signalRed, 'signal still red after fix');
   assert(sim.locals.I5.overlay.rail === null, 'hold never released after fix');
+  } finally { CONFIG.gateRepairMin = oldMin; CONFIG.gateRepairMax = oldMax; }
 });
 
 scenario(17, 'Combined stress: peak + trains + accident + EV', () => {
@@ -401,7 +411,7 @@ scenario(20, 'Ped button pressed MID-green is served next cycle, not eaten', () 
   assert(servedAtOnset, 'button never served at a green onset');
 });
 
-scenario(21, 'Gates stay down (and entry closed) until train fully clear', () => {
+scenario(21, 'CLOSED persists (and entry stays closed) until train fully clear', () => {
   const sim = fresh(7, { noTrains: true });
   sim.run(60);
   sim.forceTrain(1);
@@ -410,28 +420,30 @@ scenario(21, 'Gates stay down (and entry closed) until train fully clear', () =>
     for (const name of Object.keys(CROSSINGS)) {
       const st = sim.railway.crossings[name].state;
       if (sim.trains.occupying(name))
-        assert(st === 'CLOSED' || st === 'LOWERING', `${name} ${st} while train occupies crossing`);
-      if (st === 'RAISING') {
+        assert(st === 'CLOSED', `${name} ${st} while train occupies crossing`);
+      if (st !== 'OPEN') {
         const c = CROSSINGS[name];
         for (const [key, pipe] of Object.entries(sim.model.pipes))
           if (key.startsWith(c.link + ':'))
-            assert(!pipe.entryOpen, 'road entry open during RAISING');
+            assert(!pipe.entryOpen, `road entry open while gate state is ${st}`);
       }
     }
   }
 });
 
-scenario(22, 'Jam gate with NO train: clear releases the intersection hold', () => {
+scenario(22, 'Jam gate with NO train: indication only, no declared fault', () => {
   const sim = fresh(10, { noTrains: true });
   sim.run(30);
   sim.jamGate('A');
   sim.run(60);
-  assert(sim.locals.I5.overlay.rail !== null, 'fault did not hold I5');
-  assert(sim.railway.crossings.A.state === 'CLOSED', 'fault did not physically close gates');
+  assert(sim.railway.crossings.A.armFailed, 'arm failure injection was not retained');
+  assert(sim.railway.crossings.A.state === 'OPEN', 'fault declared without a close demand');
+  assert(sim.locals.I5.overlay.rail === null, 'idle injection incorrectly held I5');
+  assert(!sim.trains.signalRed, 'idle injection incorrectly stopped trains');
+  assert(sim.model.pipes['I3-I5:I3'].entryOpen && sim.model.pipes['I3-I5:I5'].entryOpen,
+    'idle injection closed the road link');
   sim.clearGateFault('A');
-  sim.run(60);
-  assert(sim.locals.I5.overlay.rail === null, 'hold never released after fault cleared (no train ever came)');
-  assert(sim.railway.crossings.A.state === 'OPEN', 'gates never reopened');
+  assert(!sim.railway.crossings.A.armFailed, 'operator could not clear the latent injection');
 });
 
 scenario(23, 'EV lifecycle: no double dispatch, none while central dead', () => {
@@ -495,7 +507,10 @@ scenario(25, 'Crossing C: I1 train preemption, safe greens, no vehicles on track
   assert(sim.railway.crossings.C.state === 'OPEN', 'C gates never reopened');
 });
 
-scenario(26, 'Jam gate C: C signal red, I1 holds, train stops and fault recovers', () => {
+scenario(26, 'Gate C failure is declared on proof timeout and manually recovers', () => {
+  const oldMin = CONFIG.gateRepairMin, oldMax = CONFIG.gateRepairMax;
+  CONFIG.gateRepairMin = CONFIG.gateRepairMax = 1e9;   // manual-recovery path only
+  try {
   const sim = fresh(7, { noTrains: true });
   sim.trains.signalRed = true;
   assert(Object.values(sim.trains.redCrossings).every(Boolean),
@@ -505,17 +520,20 @@ scenario(26, 'Jam gate C: C signal red, I1 holds, train stops and fault recovers
     'legacy signalRed setter did not clear every crossing');
   sim.run(60);
   sim.jamGate('C');
-  assert(sim.trains.redCrossings.C && sim.trains.signalRed, 'C train signal not red');
-  sim.run(10);
-  assert(sim.central.alarms.some((a) => a.kind === 'GATE_FAULT'), 'no C gate-fault alarm');
+  assert(!sim.trains.redCrossings.C && sim.railway.crossings.C.state === 'OPEN',
+    'C injection declared before a close command');
   sim.forceTrain(1);
+  sim.run(55);
+  assert(sim.railway.crossings.C.state === 'BROKEN', 'C did not fail on absent proof');
+  assert(sim.trains.redCrossings.C && sim.trains.signalRed, 'C train signal not red after declaration');
+  assert(sim.central.alarms.some((a) => a.kind === 'GATE_FAULT'), 'no C gate-fault alarm');
   let minDistance = Infinity;
-  for (let i = 0; i < 6000; i++) {
+  for (let i = 0; i < 1800; i++) {
     sim.step();
     for (const tr of sim.trains.trains)
       minDistance = Math.min(minDistance, RAIL.s('C') - tr.s);
   }
-  assert(minDistance > 0, `train entered jammed C crossing (${minDistance.toFixed(1)} m)`);
+  assert(minDistance >= 79.9, `train passed C protecting signal (${minDistance.toFixed(1)} m)`);
   const m = sim.locals.I1.machine;
   assert(sim.locals.I1.overlay.rail?.crossing === 'C', 'I1 not holding for C fault');
   assert(!(m.state === 'GREEN' && m.phase === 'A'), 'toward-track phase green during C fault');
@@ -527,6 +545,118 @@ scenario(26, 'Jam gate C: C signal red, I1 holds, train stops and fault recovers
   assert(!sim.trains.redCrossings.C && !sim.trains.signalRed, 'C signal stayed red after repair');
   assert(sim.locals.I1.overlay.rail === null, 'I1 hold never released after C repair');
   assert(sim.railway.crossings.C.state === 'OPEN', 'C gates never reopened after repair');
+  } finally {
+    CONFIG.gateRepairMin = oldMin;
+    CONFIG.gateRepairMax = oldMax;
+  }
+});
+
+scenario(28, 'Gate fault is declared exactly at gateProveTimeout', () => {
+  const sim = fresh(10, { noTrains: true });
+  sim.jamGate('A');
+  const commandedAt = sim.t;
+  sim.railway.commandClosed('A', commandedAt);
+  sim.run(CONFIG.gateProveTimeout - CONFIG.dt);
+  assert(sim.railway.crossings.A.state === 'CLOSED', 'fault declared before proof timeout');
+  while (sim.railway.crossings.A.state !== 'BROKEN') sim.step();
+  const fault = sim.bus.log.find((m) => m.type === MSG.GATE_FAULT && m.data.crossing === 'A');
+  assert(fault, 'no gate-fault message');
+  assert(Math.abs(fault.t - commandedAt - CONFIG.gateProveTimeout) < 1e-9,
+    `fault at ${(fault.t - commandedAt).toFixed(1)}s, expected ${CONFIG.gateProveTimeout}s`);
+});
+
+scenario(29, 'Broken crossing produces continuous braking to the 80 m signal', () => {
+  const sim = fresh(7, { noTrains: true });
+  sim.jamGate('A');
+  sim.forceTrain(1);
+  const tr = sim.trains.trains[0];
+  let declared = false, before = null, after = null;
+  for (let i = 0; i < 3000; i++) {
+    const prior = tr.velocity;
+    sim.step();
+    if (!declared && sim.railway.crossings.A.state === 'BROKEN') {
+      declared = true; before = tr.velocity;
+    } else if (declared && after === null) {
+      after = tr.velocity;
+      assert(after > 0, 'train velocity jumped instantly to zero');
+      assert(after <= before && before - after < 0.2, 'train velocity changed discontinuously');
+    }
+    if (declared && tr.velocity === 0) break;
+    assert(prior - tr.velocity < 0.2, 'per-tick train velocity jump exceeded braking integration');
+  }
+  assert(declared && after !== null, 'fault/braking transition not observed');
+  assert(tr.velocity === 0, 'train never came to a stand');
+  assert(Math.abs(tr.s - (RAIL.s('A') - 80)) < 0.1,
+    `train stopped ${(RAIL.s('A') - tr.s).toFixed(1)}m before crossing, expected 80m`);
+  assert(tr.brake.decel > 0 && tr.brake.decel < 1,
+    `computed deceleration ${tr.brake.decel.toFixed(3)}m/s² outside service range`);
+  return `constant deceleration ${tr.brake.decel.toFixed(3)} m/s²`;
+});
+
+scenario(30, 'BROKEN closes both road directions and holds both feeding phases', () => {
+  const oldMin = CONFIG.gateRepairMin, oldMax = CONFIG.gateRepairMax;
+  CONFIG.gateRepairMin = CONFIG.gateRepairMax = 900;
+  try {
+    const sim = fresh(7, { noTrains: true });
+    sim.jamGate('A'); sim.forceTrain(1);
+    while (sim.railway.crossings.A.state !== 'BROKEN') sim.step();
+    sim.run(CONFIG.yellow + CONFIG.allRed + 1);
+    assert(!sim.model.pipes['I3-I5:I3'].entryOpen && !sim.model.pipes['I3-I5:I5'].entryOpen,
+      'one direction of crossing link remained open');
+    for (const node of ['I3', 'I5']) {
+      assert(sim.locals[node].overlay.rail?.crossing === 'A'
+        && sim.locals[node].overlay.rail.stage === 'HOLD', `${node} did not enter indefinite HOLD`);
+      const m = sim.locals[node].machine;
+      assert(!(m.state === 'GREEN' && m.phase === 'A'), `${node} feeding phase remained green`);
+    }
+  } finally {
+    CONFIG.gateRepairMin = oldMin; CONFIG.gateRepairMax = oldMax;
+  }
+});
+
+scenario(31, 'Pinned automatic repair restores trains, road, and overlays', () => {
+  const oldMin = CONFIG.gateRepairMin, oldMax = CONFIG.gateRepairMax;
+  CONFIG.gateRepairMin = CONFIG.gateRepairMax = 5;
+  try {
+    const sim = fresh(7, { noTrains: true });
+    sim.jamGate('A'); sim.forceTrain(1);
+    while (sim.railway.crossings.A.state !== 'BROKEN') sim.step();
+    const repairDue = sim.railway.crossings.A.repairAt;
+    while (sim.t <= repairDue + 250) sim.step();
+    assert(!sim.railway.crossings.A.armFailed && !sim.trains.redCrossings.A,
+      'automatic repair did not clear physical failure and train red');
+    assert(sim.railway.crossings.A.state === 'OPEN', 'crossing did not return OPEN after train cleared');
+    assert(sim.locals.I3.overlay.rail === null && sim.locals.I5.overlay.rail === null,
+      'one of the two fault holds remained after repair');
+    assert(sim.model.pipes['I3-I5:I3'].entryOpen && sim.model.pipes['I3-I5:I5'].entryOpen,
+      'road link did not reopen after repaired train session');
+  } finally {
+    CONFIG.gateRepairMin = oldMin; CONFIG.gateRepairMax = oldMax;
+  }
+});
+
+scenario(32, 'Queued trains retain train length plus 100 m separation', () => {
+  const oldMin = CONFIG.gateRepairMin, oldMax = CONFIG.gateRepairMax;
+  CONFIG.gateRepairMin = CONFIG.gateRepairMax = 900;
+  try {
+    const sim = fresh(7, { noTrains: true });
+    sim.jamGate('A'); sim.forceTrain(1);
+    let minGap = Infinity;
+    for (let seconds = 0; seconds < 220; seconds++) {
+      if ([40, 80, 120].includes(seconds)) sim.forceTrain(1);
+      sim.run(1);
+      const line = sim.trains.trains.filter((tr) => tr.dir === 1).sort((a, b) => b.s - a.s);
+      for (let i = 1; i < line.length; i++)
+        minGap = Math.min(minGap, line[i - 1].s - line[i].s);
+    }
+    const queued = sim.trains.trains.filter((tr) => tr.dir === 1).sort((a, b) => b.s - a.s);
+    assert(queued.length === 4, `expected four queued trains, got ${queued.length}`);
+    assert(minGap >= 220 - 1e-6, `queued trains closed to ${minGap.toFixed(2)}m (<220m)`);
+    assert(queued.every((tr) => tr.velocity < 0.1), 'queued trains did not settle to a stand');
+    return `minimum front-to-front gap ${minGap.toFixed(1)} m`;
+  } finally {
+    CONFIG.gateRepairMin = oldMin; CONFIG.gateRepairMax = oldMax;
+  }
 });
 
 scenario(27, 'Peak congestion flexes own split and restores an external approach', () => {

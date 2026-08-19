@@ -50,8 +50,17 @@ export function buildControls(root, sim) {
     const b = $(`#b-jam${name}`);
     b.onclick = () => {
       const c = sim.railway.crossings[name];
-      if (!c.fault) { sim.jamGate(name); b.textContent = `Fix gate ${name}`; b.classList.add('active'); }
-      else { sim.clearGateFault(name); b.textContent = `Jam gate ${name}`; b.classList.remove('active'); }
+      if (!c.armFailed) sim.jamGate(name);
+      else sim.clearGateFault(name);
     };
   }
+  // Automatic repair can change button state without a click. Keep the
+  // operator indication synchronized with the physical injection flag.
+  setInterval(() => {
+    for (const name of Object.keys(CROSSINGS)) {
+      const b = $(`#b-jam${name}`), failed = sim.railway.crossings[name].armFailed;
+      b.textContent = failed ? `Fix gate ${name}` : `Jam gate ${name}`;
+      b.classList.toggle('active', failed);
+    }
+  }, 250);
 }

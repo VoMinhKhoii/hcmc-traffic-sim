@@ -40,8 +40,10 @@ export class LocalController {
           this.plan = { type: m.data.plan, params: m.data.params ?? {} };
           this.planCommand = { from: m.from, t: m.t, meta: m.meta };
           break;
-        case MSG.TRAIN_APPROACHING: this.overlay.onTrainApproaching(m.data.crossing, t, m.meta); break;
-        case MSG.GATES_UP: this.overlay.onGatesUp(t, m.meta); break;
+        case MSG.TRAIN_APPROACHING:
+          this.overlay.onTrainApproaching(m.data.crossing, m.data.eta, t, m.meta);
+          break;
+        case MSG.GATES_UP: this.overlay.onGatesUp(t, m.meta, m.data?.crossing); break;
         case MSG.PREEMPT: this.overlay.onPreempt(m.data.approach, m.data.eta, m.meta, m.t); break;
         case MSG.RESUME: this.overlay.onResume(t, m.meta); break;
       }

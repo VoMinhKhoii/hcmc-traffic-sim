@@ -46,11 +46,14 @@ export const RAIL = (() => {
   };
 })();
 
-const TRAIN_LEN = 120; // m
+export const TRAIN_LEN = 120; // m
+export const TRAIN_SAFE_GAP = 100; // m beyond the leading train's rear
+const TRAIN_ACCEL = 0.5;           // m/s² after a restriction clears
+const SEPARATION_BRAKE = 1.0;      // m/s² maximum following-train brake
 
 export class TrainSystem {
   constructor() {
-    this.trains = [];        // {id, s, dir(+1 A→B / -1), speed, warned, cleared}
+    this.trains = [];        // {id, s, dir(+1 A→B / -1), velocity, warned, cleared}
     this.nextSpawn = 60;     // first train 1 sim-minute in
     this.nextId = 1;
     this.redCrossings = Object.fromEntries(Object.keys(CROSSINGS)
@@ -65,13 +68,47 @@ export class TrainSystem {
     for (const name of Object.keys(CROSSINGS)) this.redCrossings[name] = v;
   }
 
+  setCrossingBroken(name, broken) {
+    this.redCrossings[name] = broken;
+    if (broken) {
+      for (const tr of this.trains) {
+        const next = this.nextCrossing(tr);
+        if (next?.name === name) this.ensureBrake(tr, next);
+      }
+    } else {
+      for (const tr of this.trains)
+        if (tr.brake?.crossing === name) tr.brake = null;
+    }
+  }
+
   forceTrain(dir = 1) { this.spawn(dir); }
 
   spawn(dir) {
+    const sameDirection = this.trains.filter((tr) => tr.dir === dir);
+    const rear = sameDirection.length
+      ? sameDirection.reduce((a, b) => dir * a.s < dir * b.s ? a : b)
+      : null;
+    const entry = dir === 1 ? 0 : RAIL.total;
+    const s = rear
+      ? (dir === 1
+        ? Math.min(entry, rear.s - TRAIN_LEN - TRAIN_SAFE_GAP)
+        : Math.max(entry, rear.s + TRAIN_LEN + TRAIN_SAFE_GAP))
+      : entry;
+    // Enter at a speed the following model could itself have reached here, not
+    // at line speed. Spawning at line speed one safe-gap behind a stopped queue
+    // forces a 16.7 -> 0 m/s step on the very first tick.
+    const freeGap = rear
+      ? Math.max(0, dir * (rear.s - s) - TRAIN_LEN - TRAIN_SAFE_GAP)
+      : Infinity;
+    const velocity = rear
+      ? Math.min(speedMs(CONFIG.trainSpeedKmh),
+        Math.sqrt(rear.velocity ** 2 + 2 * SEPARATION_BRAKE * freeGap))
+      : speedMs(CONFIG.trainSpeedKmh);
     this.trains.push({
       id: this.nextId++, dir,
-      s: dir === 1 ? 0 : RAIL.total,
-      speed: speedMs(CONFIG.trainSpeedKmh),
+      s,
+      velocity,
+      brake: null,
       warned: {}, cleared: {},
     });
   }
@@ -91,38 +128,74 @@ export class TrainSystem {
       this.nextSpawn = t + CONFIG.headway[mode];
     }
 
-    for (const tr of this.trains) {
-      // a red signal at a SPECIFIC crossing stops the train 80 m before THAT
-      // crossing; a healthy crossing on the same corridor is unaffected
-      let v = tr.speed;
-      const next = this.nextCrossing(tr);
-      if (next && this.redCrossings[next.name]) {
-        const stopAt = next.s - tr.dir * 80;
-        if (tr.dir === 1 && tr.s + v * dt > stopAt && tr.s <= stopAt) v = Math.max(0, (stopAt - tr.s) / dt);
-        if (tr.dir === -1 && tr.s - v * dt < stopAt && tr.s >= stopAt) v = Math.max(0, (tr.s - stopAt) / dt);
-        if (Math.abs(tr.s - stopAt) < 1) v = 0;
-      }
-      tr.s += tr.dir * v * dt;
+    // Move each direction front-to-back so a follower can brake for the
+    // already-updated position of the train ahead. Front-to-front separation
+    // is train length + 100 m, so rendered train bodies never overlap.
+    for (const dir of [1, -1]) {
+      const line = this.trains.filter((tr) => tr.dir === dir)
+        .sort((a, b) => dir * b.s - dir * a.s);
+      let ahead = null;
+      for (const tr of line) {
+        const v0 = tr.velocity;
+        const next = this.nextCrossing(tr);
+        if (next && this.redCrossings[next.name]) this.ensureBrake(tr, next);
+        else if (tr.brake && !this.redCrossings[tr.brake.crossing]) tr.brake = null;
 
-      for (const name of Object.keys(CROSSINGS)) {
-        const cs = RAIL.s(name);
-        const dist = tr.dir === 1 ? cs - tr.s : tr.s - cs;
-        const eta = v > 0 ? dist / v : Infinity;
-        if (!tr.warned[name] && dist > 0 && eta <= CONFIG.trainWarning) {
-          tr.warned[name] = true;
-          this.events.push({ type: 'APPROACH', crossing: name, train: tr.id, eta });
+        let v1;
+        if (tr.brake && this.redCrossings[tr.brake.crossing])
+          v1 = Math.max(0, v0 - tr.brake.decel * dt);
+        else
+          v1 = Math.min(speedMs(CONFIG.trainSpeedKmh), v0 + TRAIN_ACCEL * dt);
+
+        if (ahead) {
+          const gap = dir * (ahead.s - tr.s);
+          const freeGap = Math.max(0, gap - TRAIN_LEN - TRAIN_SAFE_GAP);
+          const safeV = Math.sqrt(ahead.velocity ** 2 + 2 * SEPARATION_BRAKE * freeGap);
+          if (v1 > safeV) v1 = Math.max(safeV, v0 - SEPARATION_BRAKE * dt);
         }
-        // CLEAR only once the train's REAR is past the crossing's occupancy
-        // zone (+80 m), so gates never begin raising under an occupying train
-        const back = tr.s - tr.dir * TRAIN_LEN;
-        const passed = tr.dir === 1 ? back > cs + 80 : back < cs - 80;
-        if (tr.warned[name] && !tr.cleared[name] && passed) {
-          tr.cleared[name] = true;
-          this.events.push({ type: 'CLEAR', crossing: name, train: tr.id });
+
+        let nextS = tr.s + dir * (v0 + v1) * 0.5 * dt;
+        if (tr.brake && this.redCrossings[tr.brake.crossing]) {
+          const stopQ = dir * tr.brake.stopAt;
+          if (dir * nextS >= stopQ || (v1 === 0 && stopQ - dir * nextS < 0.05)) {
+            nextS = tr.brake.stopAt;
+            v1 = 0;
+          }
+        }
+        if (ahead) {
+          const maxQ = dir * ahead.s - TRAIN_LEN - TRAIN_SAFE_GAP;
+          if (dir * nextS > maxQ) {
+            nextS = dir * maxQ;
+            v1 = Math.min(v1, ahead.velocity);
+          }
+        }
+        tr.s = nextS;
+        tr.velocity = v1;
+        ahead = tr;
+
+        for (const name of Object.keys(CROSSINGS)) {
+          const cs = RAIL.s(name);
+          const dist = tr.dir === 1 ? cs - tr.s : tr.s - cs;
+          const eta = tr.velocity > 0 ? dist / tr.velocity : Infinity;
+          if (!tr.warned[name] && dist > 0 && eta <= CONFIG.trainWarning) {
+            tr.warned[name] = true;
+            this.events.push({ type: 'APPROACH', crossing: name, train: tr.id, eta });
+          }
+          const back = tr.s - tr.dir * TRAIN_LEN;
+          const passed = tr.dir === 1 ? back > cs + 80 : back < cs - 80;
+          if (tr.warned[name] && !tr.cleared[name] && passed) {
+            tr.cleared[name] = true;
+            this.events.push({ type: 'CLEAR', crossing: name, train: tr.id });
+          }
         }
       }
     }
-    this.trains = this.trains.filter((tr) => tr.s > -TRAIN_LEN - 10 && tr.s < RAIL.total + TRAIN_LEN + 10);
+    // Entry-side coordinates may be outside the clipped map when a long fault
+    // queues back beyond the modeled corridor. Remove only after the train has
+    // exited at the far end of its direction of travel.
+    this.trains = this.trains.filter((tr) => tr.dir === 1
+      ? tr.s < RAIL.total + TRAIN_LEN + 10
+      : tr.s > -TRAIN_LEN - 10);
   }
 
   nextCrossing(tr) {
@@ -131,6 +204,21 @@ export class TrainSystem {
       .filter((c) => (tr.dir === 1 ? c.s > tr.s : c.s < tr.s));
     if (!ahead.length) return null;
     return ahead.reduce((m, c) => (tr.dir === 1 ? (c.s < m.s ? c : m) : (c.s > m.s ? c : m)));
+  }
+
+  ensureBrake(tr, crossing) {
+    if (tr.brake?.crossing === crossing.name) return;
+    const signalAt = crossing.s - tr.dir * 80;
+    const distance = tr.dir * (signalAt - tr.s);
+    // Zone 3 is excluded by the proved-down fault timing. If a red is somehow
+    // asserted with the train already past the protecting signal, brake as hard
+    // as the model allows from where it actually is — never place the stopping
+    // point behind the train, which would teleport it backwards.
+    const stopAt = distance > 0 ? signalAt : tr.s;
+    const decel = distance > 0
+      ? tr.velocity ** 2 / (2 * distance)
+      : SEPARATION_BRAKE;
+    tr.brake = { crossing: crossing.name, stopAt, decel };
   }
 
   // is any train occupying crossing zone (±60 m)?

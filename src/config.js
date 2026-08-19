@@ -32,7 +32,12 @@ export const CONFIG = {
 
   // railway
   trainWarning: 30,     // s before train reaches a crossing
-  gateTime: 8,          // s for gates to lower/raise
+  barrierTravel: 8,     // s the SIMULATED HARDWARE takes to answer 'proved down'
+                        // (also the on-screen animation). The controller never
+                        // branches on it; only gateProveTimeout decides anything.
+  gateProveTimeout: 10, // s from down command to failure-to-prove fault
+  gateRepairMin: 300,   // s automatic human-repair delay (demo minimum)
+  gateRepairMax: 900,   // s automatic human-repair delay (demo maximum)
   trainSpeedKmh: 60,
   headway: { PEAK: 120, OFFPEAK: 600, NIGHT: 1200 }, // s between trains
 
