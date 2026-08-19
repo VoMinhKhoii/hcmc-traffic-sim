@@ -21,7 +21,7 @@ design section is done.
 |---|---|---|
 | **Message table** | Every inter-process message: name, sender, receiver, payload, trigger, deadline | `src/messages.js` (the 9 types) + the live event log pane + verify scenario 18 |
 | **Timing table** | Every constant, with a derivation, not a guess | `TIMINGS.md`, cross-checked by verify scenarios 1, 2, 5, 6, 8 |
-| **Failure table** | Each fault, its detection mechanism, its fail-safe response, its recovery | `killCentral` / `jamGate` controls + verify scenarios 14, 15, 16, 22 |
+| **Failure table** | Each fault, its detection mechanism, its fail-safe response, its recovery | `killCentral` / `jamGate` controls + verify scenarios 14–16, 22, 26, 28–32 |
 
 The QNX code is then a transliteration: each actor becomes a process, each
 message becomes a `MsgSend`/`MsgReceive` pair or a pulse, each timing constant
@@ -79,9 +79,11 @@ signal state machine is the lock.
 
 ### 3.2 Preemption, and the cost of a non-preemptible section
 
-A train approaching is a hard deadline: the gates must be down and the track
-clear before it arrives. But you cannot cut a green to red instantly — the
-clearance interval is physically mandatory. So the preemption sequence is:
+A train approaching is a hard deadline: the crossing must be protected and the
+track clear before it arrives. The down command immediately enters the CLOSED
+control state and blocks the road; the renderer independently shows 8 s of arm
+travel. You cannot cut a green to red instantly, because the clearance interval
+is physically mandatory. So the preemption sequence is:
 
 FLUSH (force green toward the track to empty the pocket) → clearance →
 HOLD (toward-track approaches red) → train passes → recovery.
@@ -124,16 +126,23 @@ inversion**, and it is bounded here by the clearance interval.
 
 ### 3.5 Fail-safe design
 
-- **Watch:** press *Jam gate*. The gate cannot raise. The train signal goes RED
-  and the train itself stops; the intersection holds toward-track approaches red
-  until a human clears the fault.
+- **Watch:** press *Jam gate* while the crossing is idle. The new **ARM FAILED**
+  indication appears, but no alarm or train red is asserted yet. Force a train:
+  the down command is issued, proof is absent for 10 s, and only then does the
+  crossing enter BROKEN.
 - **The important detail:** the failure response makes the system *less*
   useful (traffic is held, the train stops) but *never unsafe*. That is the
   definition of fail-safe, and it is the opposite of "keep running and hope".
-- **Report it as:** a fault table row — detection (gate position sensor
-  disagrees with commanded state), response (`GATE_FAULT` + `ALARM`, hold reds,
-  stop train), recovery (manual clear only, never automatic).
-- **Evidence:** verify scenarios 16 and 22.
+- **Report it as:** the only modeled gate fault is **failure to prove closed**.
+  Detection is absence of proved-down feedback for `gateProveTimeout = 10 s`;
+  response is `GATE_FAULT` + `ALARM`, train signal red, constant-deceleration
+  braking to the signal 80 m short, both road-link directions closed, and only
+  each endpoint's feeding movement held red. Recovery is automatic after a
+  deterministic-seeded 300–900 s human-repair delay, with manual clear as an
+  operator override.
+- **Evidence:** scenarios 16/22/26 replace the old stuck-down semantics;
+  scenarios 28–32 separately prove the timeout boundary, continuous braking,
+  two-ended holds, automatic repair, and 220 m queued-train separation.
 
 ### 3.6 Feedback control and hysteresis
 
@@ -173,7 +182,7 @@ Do these in order, record the numbers, and you have the results section.
 | 7 | Dispatch EV **and** force a train on its route | Blocking time before the train sequence starts | Priority inversion §3.3 |
 | 8 | Accident on a main link, response ON, then OFF | Time-to-clear in each case | §3.6, the benefit claim |
 | 9 | Kill central mid-peak, restore after 2 min | Message backlog flushed; any signal frozen? | Autonomy §3.4 |
-| 10 | Jam each gate in turn | Train stopped? Toward-track reds held? Alarm raised? | Fail-safe table §3.5 |
+| 10 | Jam each gate in turn, then force a train | ARM FAILED visible before demand? Fault exactly 10 s after down command? Train brakes to the 80 m signal? Both link ends held? Auto/manual repair? | Fail-safe table §3.5 |
 
 Run `node verify.js` to get all of it asserted automatically; the scenario names
 map one-to-one onto the rows above.
@@ -185,17 +194,20 @@ map one-to-one onto the rows above.
 Say this out loud in the report. Naming your simplifications is what separates
 an engineering model from a toy, and markers reward it.
 
-- **No spillback.** A link has no storage limit; a full link never blocks the
-  upstream intersection. Real oversaturation would be worse than shown.
-- **Macroscopic queues, not individual vehicles.** A queue is a real number, not
-  a list of cars. Good enough for timing design, useless for lane-change
-  behaviour.
-- **Motorbike-adjusted saturation flow.** `satFlowPerLane = 0.6` veh/s/lane is
-  calibrated for HCMC mixed traffic, not a Western car fleet. It is a
-  parameter, not a measurement — flag it as an assumption.
-- **No turning movements.** Everything goes straight through.
-- **Deterministic arrivals.** λ·dt, not a Poisson process, so there is no
-  arrival variance to do statistics on.
+**The full list lives in `ASSUMPTIONS.md`** — 41 of them, each marked for whether
+it carries into the QNX port or exists only in the simulator. Keep that file as
+the single source so the two never drift apart.
+
+If you only cite three, cite these:
+
+- **No spillback.** A link has no storage limit, so a full link never blocks the
+  intersection feeding it. This is the model's biggest departure from reality and
+  it flatters our results.
+- **This simulator proves the message set, not schedulability.** All actors run
+  in one process with an in-memory bus. "These nine messages are sufficient"
+  transfers to QNX; "the deadline is met under load" does not.
+- **Detectors are perfect.** Every adaptive decision rests on a queue reading
+  that is never noisy, never stale and never broken.
 
 ---
 

@@ -93,13 +93,82 @@ and two lanes the nominal pockets are about **31 vehicles** at A/B and
 **54 vehicles** at C. The safety invariant compares each live pocket queue
 with its own length.
 
-Warning time is 30 s. Reserving 8 s for gate movement and 2 s contingency
-leaves `30 − 8 − 2` = **20 s** for `pocketFlush`. At the 1.2 veh/s
-two-lane saturation rate that can discharge up to 24 vehicles; the overlay
-also advances to HOLD as soon as the sensed pocket phase is empty. This common
-20 s is governed by the train warning window rather than pocket length, and
-fits A, B, and C inside the same pre-arrival safety timeline. Scenarios
-4/8/9/25 verify zero track-spillback under trains, including C.
+Warning time is `trainWarning = 30 s`. A down command transitions the control
+state directly from `OPEN` to `CLOSED`, immediately blocking both directions of
+the road link. `barrierTravel = 8 s` is only the renderer's barrier-arm animation;
+the controller never reads animation progress and has no LOWERING or RAISING
+state.
+
+The physical proved-down input is expected after that 8 s travel.
+`gateProveTimeout = barrierTravel + 2 s margin = 8 + 2 = 10 s`. With the command at
+T−30 s, absent proof therefore declares `BROKEN` exactly at T−20 s. A 60 km/h
+train travels at 16.667 m/s and is then 333.3 m from the crossing. The timing
+table's crossing-reference deceleration is
+`v²/(2d) = 16.667²/(2 × 333.3) = 0.417 m/s²` (reported as **0.42 m/s²**).
+The simulator stops the train's front at the protecting signal 80 m short, so
+its actual available braking distance is 253.3 m and its computed constant
+deceleration is about **0.55 m/s²**, still comfortable service braking and well
+below the 1.0 m/s² defensive limit. There is no instantaneous velocity clamp.
+
+`gateRepairMin = 300 s` and `gateRepairMax = 900 s` model a deterministic-seeded
+draw from a 5–15 minute demo repair interval. Real repairs would more plausibly
+use 1800–5400 s; the shorter demo range prevents hundreds of vehicles building
+up in a macroscopic model with no link storage or spillback. Verification can
+pin the two values equal, exercising automatic repair without randomness.
+
+The rail HOLD overlay is applied indefinitely at both endpoints of a BROKEN
+crossing link. At each endpoint only the phase containing the movement feeding
+that link is held; the other phase continues normally. Trains on the same track
+maintain a front-to-front separation of `120 m train length + 100 m safe gap =
+220 m`, allowing several peak-headway trains to queue behind the 80 m signal.
+
+The normal preemption `pocketFlush = 20 s` fits the warning window
+(`trainWarning − barrierTravel − 2 s margin = 30 − 8 − 2`) and at the 1.2 veh/s
+two-lane saturation rate discharges up to 24 vehicles. The overlay advances to
+HOLD early if the sensed pocket phase is already empty.
+
+**Why the flush stage exists at all** (measured, not assumed — 1 h from 07:00
+with trains at the 120 s peak headway):
+
+| Demand | Flush | Safety violations | Max pocket A (cap 31) |
+|---|---|---|---|
+| ×1.0 | 20 s | 0 | 20.0 |
+| ×1.0 | none | 0 | 20.0 |
+| ×1.5 | 20 s | 0 | 21.7 |
+| ×1.5 | none | 0 | 28.0 |
+| ×2.0 | 20 s | 0 | 23.4 |
+| ×2.0 | none | **3324** | **361.9** |
+
+Below ×1.5 the flush changes nothing. Above it the flush is the difference
+between a stable pocket and unbounded divergence, and the mechanism is **green
+starvation, not track spillback**: without a flush stage the preemption goes
+straight to HOLD, which reds the toward-track phase for the whole preemption,
+every 120 s. Phase A's green share at I5 collapses from 33.5% to 21.8% — below
+what the demand needs — so the queue grows without bound and only then reaches
+the tracks. The flush is what stops rail preemption from starving the main road.
+It also raises throughput (9880 vs 9579 vehicles exited per hour at ×2.0), so it
+costs nothing.
+
+**Why 20 s and not less** (same run at ×2.0):
+
+| Flush | Violations | Max pocket A | Phase A green share |
+|---|---|---|---|
+| 0 s | 3324 | 361.9 | 21.8% |
+| 5 s | 3324 | 356.2 | 22.0% |
+| 10 s | 2890 | 199.8 | 26.2% |
+| 15 s | 0 | 37.3 | 31.7% |
+| **20 s** | **0** | **23.4** | **33.5%** |
+| 25 s | 0 | 23.4 | 37.5% |
+
+15 s is marginal (the pocket still transiently exceeds its 31-vehicle capacity),
+20 s holds it comfortably below, and 25 s buys nothing further. 20 s is the
+smallest safe value with margin.
+
+The common 20 s is governed by the train warning window rather than pocket
+length, and fits A, B, and C inside the same pre-arrival safety timeline. Scenarios
+4/8/9/25 verify zero track-spillback under trains, including C. Scenarios
+28–32 verify proof timing, continuous braking, two-ended road protection,
+automatic repair, and queued-train separation.
 
 Train headways per the brief: 2 min peak, ~20 min night (~22:00+).
 Simplification (stated): night trains are modeled every night; the brief's
