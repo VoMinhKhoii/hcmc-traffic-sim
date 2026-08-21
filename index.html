@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>HCMC Traffic Network Sim — RTS design tool</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background:#0b0e11; color:#cfd8e0; font:13px/1.45 "SF Mono", Menlo, Consolas, monospace; display:flex; height:100vh; overflow:hidden; }
+  #left { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #hud { padding:8px 14px; display:flex; gap:22px; align-items:baseline; border-bottom:1px solid #1e252c; }
+  #hud .clock { font-size:20px; color:#fff; }
+  #hud .mode-PEAK { color:#ff8b5a } #hud .mode-OFFPEAK { color:#4aa3ff } #hud .mode-NIGHT { color:#b98bff }
+  canvas { flex:1; width:100%; height:100%; display:block; }
+  #right { width:440px; border-left:1px solid #1e252c; display:flex; flex-direction:column; overflow-y:auto; }
+  #right > div { padding:10px 12px; border-bottom:1px solid #1e252c; }
+  h3 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:#8fa0af; margin-bottom:8px; }
+  .grp { margin-bottom:8px; }
+  .grp label { display:block; color:#8fa0af; margin-bottom:3px; }
+  input[type=range] { width:100%; }
+  button { background:#1b232b; color:#cfd8e0; border:1px solid #2c3742; border-radius:4px; padding:4px 9px; margin:2px 2px 2px 0; cursor:pointer; font:inherit; }
+  button:hover { background:#26313c; }
+  button.warn { border-color:#7c3a3a; } button.active { background:#7c2f2f; color:#fff; }
+  select { background:#1b232b; color:#cfd8e0; border:1px solid #2c3742; border-radius:4px; padding:3px; font:inherit; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { text-align:left; padding:2px 6px; font-size:12px; }
+  th { color:#5f7080; } tr:nth-child(even) td { background:#12181e; }
+  .st-GREEN { color:#37d67a } .st-YELLOW { color:#ffd23f } .st-ALLRED { color:#ff5a5a } .st-FLASH { color:#b98bff }
+  .ok { color:#37d67a } .bad { color:#ff5a5a } .dim { color:#5f7080 }
+  .msg { font-size:11px; padding:6px 0; border-bottom:1px solid #1a2026; line-height:1.45; }
+  .msg.chain-child { margin-left:10px; padding-left:8px; border-left:1px solid #35414b; }
+  .msg.chain-root { padding-top:8px; }
+  .msg-main { display:flex; flex-wrap:wrap; gap:2px 7px; align-items:baseline; }
+  .msg .t { color:#5f7080; font-variant-numeric:tabular-nums; }
+  .msg .ft { color:#8fa0af; }
+  .msg .type { font-weight:700; }
+  .msg .d { color:#a8b4be; flex-basis:100%; padding-left:48px; }
+  .cid { color:#8fa0af; background:#1b232b; border:1px solid #2c3742; border-radius:3px; padding:0 4px; }
+  .causal { color:#748594; padding:2px 0 0 48px; }
+  .cause, .effect { color:#9dabb7; text-transform:uppercase; letter-spacing:.05em; font-size:9px; }
+  .arrow { color:#4f6070; padding:0 2px; }
+  .measure { color:#d5dee5; }
+  .threshold, .unchanged { color:#5f7080; }
+  .delta { color:#dceeff; background:#19344b; border:1px solid #285273; border-radius:3px; padding:0 3px; font-weight:700; }
+  .alarm { color:#ffd23f; font-size:12px; padding:1px 0; }
+  .tiny { font-size:10px; text-transform:none; letter-spacing:0; color:#5f7080; float:right; }
+  #banner { display:none; padding:20px; color:#ffd23f; }
+  #left { position:relative; }
+  #local-panel { position:absolute; z-index:10; width:338px; background:#141a20; border:1px solid #3a4650;
+    border-radius:6px; padding:8px 10px; box-shadow:0 4px 18px rgba(0,0,0,.45); font-size:12px; }
+  #local-panel .ph { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+  #local-panel .pl { margin:4px 0; color:#8fa0af; }
+  #local-panel .why-title { margin-top:8px; color:#dbe5ec; font-weight:700; }
+  #local-panel .plan-facts { color:#9eb0be; padding:4px 0; font-size:11px; }
+  #local-panel .why-copy { color:#c4cfd7; line-height:1.5; padding-bottom:5px; }
+  #local-panel .interventions { border-top:1px solid #2a343d; border-bottom:1px solid #2a343d; padding:4px 0; margin-bottom:5px; }
+  #local-panel .intervention { color:#aebbc5; padding:2px 0; font-size:11px; }
+  #local-panel table { width:100%; }
+  #local-panel td { padding:1px 4px; }
+  button.mini { padding:1px 6px; font-size:11px; }
+  button.mini.active { background:#2e5d34; }
+</style>
+</head>
+<body>
+  <div id="left">
+    <div id="hud">
+      <span class="clock" id="hud-clock">--:--</span>
+      <span id="hud-mode">—</span>
+      <span class="dim" id="hud-stats"></span>
+    </div>
+    <canvas id="map"></canvas>
+  </div>
+  <div id="right">
+    <div id="controls"></div>
+    <div id="board"></div>
+    <div id="log"></div>
+  </div>
+  <div id="banner"><b>Opened via file:// ?</b> Browsers block ES modules from plain files.<br>
+    Run <code>./run.command</code> (double-click) or <code>python3 -m http.server</code> in this folder, then open <code>http://localhost:8000</code>.</div>
+
+<script>
+  // if module loading fails (file://), show the hint
+  window.addEventListener('error', (e) => {
+    if (String(e.message).match(/module|CORS|import/i) || location.protocol === 'file:') {
+      document.getElementById('banner').style.display = 'block';
+    }
+  }, true);
+</script>
+<script type="module">
+  import { CONFIG } from './src/config.js';
+  import { Simulation } from './src/main.js';
+  import { draw } from './src/ui/render.js';
+  import { buildControls } from './src/ui/controls.js';
+  import { buildEventLog } from './src/ui/eventlog.js';
+  import { attachLocalPanels } from './src/ui/panel.js';
+
+  const sim = new Simulation();
+  buildControls(document.getElementById('controls'), sim);
+  const refreshBoard = buildEventLog(document.getElementById('log'), document.getElementById('board'), sim);
+
+  const canvas = document.getElementById('map');
+  const ctx = canvas.getContext('2d');
+  const view = { s: 1, tx: 50, ty: 30 };   // world→screen transform, shared with panels
+  function fit() {
+    const r = canvas.getBoundingClientRect();
+    canvas.width = r.width * devicePixelRatio; canvas.height = r.height * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    // world is ~1100x1000 (hand-map proportions); scale to fit
+    view.s = Math.min(r.width / 1150, r.height / 1000);
+    ctx.scale(view.s, view.s); ctx.translate(view.tx, view.ty);
+  }
+  addEventListener('resize', fit);
+  const refreshPanel = attachLocalPanels(document.getElementById('left'), canvas, sim, view);
+
+  let last = performance.now(), acc = 0, boardT = 0;
+  function frame(now) {
+    const wall = Math.min(0.1, (now - last) / 1000); last = now;
+    acc += wall * CONFIG.timeScale;
+    let steps = 0;
+    while (acc >= CONFIG.dt && steps < 4000) { sim.step(); acc -= CONFIG.dt; steps++; }
+    fit();
+    draw(ctx, sim, canvas.width, canvas.height);
+    document.getElementById('hud-clock').textContent = sim.clock.hhmm;
+    const mode = sim.clock.mode;
+    const hm = document.getElementById('hud-mode');
+    hm.textContent = mode; hm.className = 'mode-' + mode;
+    document.getElementById('hud-stats').textContent =
+      `t=${sim.t.toFixed(0)}s · in-network ${sim.model.inNetwork().toFixed(0)} veh · trains ${sim.trains.trains.length}`;
+    if ((boardT += wall) > 0.5) { boardT = 0; refreshBoard(); refreshPanel(); }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>

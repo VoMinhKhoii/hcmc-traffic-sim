@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HCMC Traffic Control — State Machines &amp; Message Flow</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --paper:  #f5f5f5;
+    --ink:    #2d3142;
+    --muted:  #4f5d75;
+    --soft:   #7a8399;
+    --accent: #eb6c36;
+    --link:   #2e5aa8;
+    --rule:   rgba(45,49,66,0.12);
+    --sans:   'Geist', system-ui, sans-serif;
+    --serif:  'Instrument Serif', serif;
+    --mono:   'Geist Mono', ui-monospace, monospace;
+  }
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    padding: 3rem 2rem 5rem;
+    line-height: 1.5;
+  }
+  .frame { max-width: 1120px; margin: 0 auto; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 500;
+    letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
+    margin-bottom: 0.5rem;
+  }
+  h1 {
+    font-family: var(--serif); font-size: clamp(1.75rem, 3vw + 0.75rem, 2.5rem);
+    font-weight: 400; letter-spacing: -0.02em; line-height: 1.1; margin-bottom: 0.75rem;
+  }
+  .standfirst { color: var(--muted); max-width: 62ch; margin-bottom: 3rem; }
+
+  .plain {
+    max-width: 68ch;
+    font-size: 0.95rem;
+    line-height: 1.65;
+    color: var(--ink);
+    border-left: 2px solid rgba(235,108,54,0.35);
+    padding-left: 1rem;
+    margin-bottom: 1.75rem;
+  }
+  .plain b { font-weight: 600; }
+
+  figure { margin: 0 0 3.5rem; }
+  figure + figure { padding-top: 2.5rem; border-top: 1px solid var(--rule); }
+  figcaption {
+    font-family: var(--serif); font-style: italic; font-size: 1rem;
+    color: var(--muted); max-width: 68ch; margin-top: 1rem;
+  }
+  figcaption code {
+    font-family: var(--mono); font-style: normal; font-size: 0.8rem; color: var(--ink);
+  }
+  h2 {
+    font-family: var(--serif); font-size: 1.4rem; font-weight: 400;
+    letter-spacing: -0.01em; margin-bottom: 1.25rem;
+  }
+  svg { width: 100%; min-width: 900px; display: block; }
+  .scroll { overflow-x: auto; }
+
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; font-size: 0.82rem; }
+  th, td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 500;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  }
+  td.msg { font-family: var(--mono); font-size: 0.76rem; font-weight: 500; white-space: nowrap; }
+  td.qnx { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+
+  footer {
+    margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--soft);
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <p class="eyebrow">EEET2588 · Real Time Systems · Design Reference</p>
+  <h1>State machines and message flow</h1>
+  <p class="standfirst">
+    The six figures below are the mechanism behind what the simulator draws. Three are finite
+    state machines that each become one QNX process; two are message sequence charts showing
+    the causal chain from a measured number to a changed light duration; the last is the
+    process topology and the full nine-message catalogue. Each figure opens with a plain-English
+    explanation of what you are looking at, with the technical reading underneath it.
+  </p>
+
+  <!-- ================= 1. SIGNAL FSM ================= -->
+  <figure>
+    <p class="eyebrow">Figure 1 · State machine</p>
+    <h2>Signal state machine (one per intersection)</h2>
+    <p class="plain">
+      <b>In plain terms.</b> A traffic light is never allowed to jump straight from one green to
+      the next. Picture a normal intersection changing: your green turns amber, everyone stops,
+      there is a short moment where <em>every</em> direction is red at once, and only then does the
+      cross street get its green. This diagram is that sequence written down as rules. The four
+      boxes are the only things a light can be doing, and the arrows are the only moves it is
+      permitted to make between them. FLASH is the night setting, where the main road blinks amber
+      and the side road blinks red instead of running a full cycle.
+    </p>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="aa" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+      </defs>
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- transitions first -->
+      <line x1="70" y1="180" x2="112" y2="180" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="280" y1="180" x2="372" y2="180" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="540" y1="180" x2="632" y2="180" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 720 140 V 88 Q 720 80 712 80 H 208 Q 200 80 200 88 V 132" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <path d="M 200 220 V 352 Q 200 360 208 360 H 364" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 540 360 H 712 Q 720 360 720 352 V 228" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+
+      <!-- transition labels -->
+      <rect x="278" y="160" width="96" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="326" y="169" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">requestPhase(q)</text>
+
+      <rect x="548" y="160" width="76" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="586" y="169" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">t &#8805; 3.0 s</text>
+
+      <rect x="376" y="60" width="168" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="460" y="69" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">t &#8805; 2.0 s / phase := pending</text>
+
+      <rect x="208" y="280" width="88" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="212" y="289" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">enterFlash()</text>
+
+      <rect x="580" y="340" width="92" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="626" y="349" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">exitFlash(q)</text>
+
+      <!-- start marker -->
+      <circle cx="64" cy="180" r="6" fill="#2d3142"/>
+
+      <!-- states -->
+      <rect x="120" y="140" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="120" y="140" width="160" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="200" y="176" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">GREEN</text>
+      <text x="200" y="196" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">phase A or B</text>
+
+      <rect x="380" y="140" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="380" y="140" width="160" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="460" y="176" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">YELLOW</text>
+      <text x="460" y="196" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">3.0 s fixed</text>
+
+      <rect x="640" y="140" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="640" y="140" width="160" height="80" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="720" y="176" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ALL-RED</text>
+      <text x="720" y="196" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">2.0 s fixed</text>
+
+      <rect x="380" y="320" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="380" y="320" width="160" height="80" rx="8" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <text x="460" y="356" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">FLASH</text>
+      <text x="460" y="376" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">night mode</text>
+
+      <!-- legend -->
+      <line x1="60" y1="440" x2="940" y2="440" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="60" y="456" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <circle cx="180" cy="452" r="5" fill="#2d3142"/>
+      <text x="196" y="456" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">initial state</text>
+      <rect x="340" y="446" width="16" height="12" rx="3" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="364" y="456" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">signal state</text>
+      <rect x="520" y="446" width="16" height="12" rx="3" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="544" y="456" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">clearance state &#8212; the mutual-exclusion guarantee</text>
+    </svg>
+    </div>
+    <figcaption>
+      No path exists from one <code>GREEN</code> to another without passing through
+      <code>YELLOW</code> then <code>ALL-RED</code>, so conflicting greens are impossible by
+      construction rather than by checking. Leaving <code>FLASH</code> also routes through
+      <code>ALL-RED</code>: traffic was moving under flashing yellow, so a direct jump to a
+      conflicting green would be unsafe. The 5 s of clearance per phase change is the lost
+      time <code>L</code> that sets the Webster cycle length.
+    </figcaption>
+  </figure>
+
+  <!-- ================= 2. GATE FSM ================= -->
+  <figure>
+    <p class="eyebrow">Figure 2 &#183; State machine</p>
+    <h2>Boom gate state machine (one per crossing A, B, C)</h2>
+    <p class="plain">
+      <b>In plain terms.</b> A barrier is only ever in one of three situations: the road is open,
+      the road is closed for a train that is on its way, or the barrier is broken. The third is not
+      simply &#8220;closed with a warning light on it&#8221;. A broken barrier means nobody can prove
+      the road is protected, so the trains have to be stopped too, and only a person can put it
+      right. Those are three genuinely different situations for everyone involved, which is why
+      each gets a state of its own &#8212; and why there are no others.
+    </p>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 540" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <line x1="70" y1="180" x2="132" y2="180" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="320" y1="164" x2="552" y2="164" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="560" y1="196" x2="328" y2="196" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 230 220 V 332 Q 230 340 238 340 H 552" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <path d="M 650 380 V 412 Q 650 420 642 420 H 198 Q 190 420 190 412 V 228" fill="none" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#a)"/>
+
+      <rect x="360" y="144" width="152" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="436" y="153" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">commanded down / proved down</text>
+
+      <rect x="368" y="208" width="136" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="436" y="217" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">train rear clear + 80 m</text>
+
+      <rect x="316" y="320" width="160" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="396" y="329" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">no &#8220;proved down&#8221; within 10 s</text>
+
+      <rect x="344" y="400" width="152" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="420" y="409" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">automatic repair &#183; 300&#8211;900 s</text>
+
+      <circle cx="64" cy="180" r="6" fill="#2d3142"/>
+
+      <rect x="140" y="140" width="180" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="140" y="140" width="180" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="230" y="176" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">OPEN</text>
+      <text x="230" y="196" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">road runs &#183; trains clear</text>
+
+      <rect x="560" y="140" width="180" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="560" y="140" width="180" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="650" y="176" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">CLOSED</text>
+      <text x="650" y="196" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">road blocked &#183; train proceeds</text>
+
+      <rect x="560" y="300" width="180" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="560" y="300" width="180" height="80" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="650" y="336" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">BROKEN</text>
+      <text x="650" y="356" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">road blocked &#183; trains held</text>
+
+      <line x1="60" y1="470" x2="940" y2="470" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="60" y="486" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <rect x="180" y="476" width="16" height="12" rx="3" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="204" y="486" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">healthy state</text>
+      <rect x="360" y="476" width="16" height="12" rx="3" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="384" y="486" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">fault &#8212; the crossing cannot be proved protected</text>
+      <line x1="760" y1="482" x2="792" y2="482" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4"/>
+      <text x="800" y="486" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">human action</text>
+    </svg>
+    </div>
+    <figcaption>
+      Barrier travel time is deliberately not a state. The eight seconds the arm spends moving is
+      a picture, not a decision, so it lives in the animation and is absorbed into the 30 s warning
+      lead. A fault is never predicted either &#8212; it is detected as a <em>missing confirmation</em>:
+      the controller commands the barrier down and declares <code>BROKEN</code> if no
+      &#8220;proved down&#8221; report arrives within ten seconds. That lands 20 s before the train
+      is due, with 253 m still to run to the signal protecting the crossing, so the train stops
+      on ordinary service braking at 0.548 m/s&#178;.
+    </figcaption>
+
+    <table>
+      <thead>
+        <tr><th>State</th><th>Road</th><th>Train signal</th><th>Alarm</th><th>Leaves when</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="msg">OPEN</td><td>passable</td><td>clear</td><td>none</td><td>a train is warned</td></tr>
+        <tr><td class="msg">CLOSED</td><td>blocked</td><td>clear &#8212; train proceeds</td><td>none</td><td>the train has cleared</td></tr>
+        <tr><td class="msg">BROKEN</td><td>blocked, and stays blocked</td><td><b>danger &#8212; trains held</b></td><td>raised to control room</td><td>a human repairs it</td></tr>
+      </tbody>
+    </table>
+  </figure>
+
+  <!-- ================= 3. PREEMPTION FSM ================= -->
+  <figure>
+    <p class="eyebrow">Figure 3 · State machine</p>
+    <h2>Preemption overlay &#8212; priority above the running plan</h2>
+    <p class="plain">
+      <b>In plain terms.</b> Sometimes something more important than ordinary traffic needs to get
+      through &#8212; a train, or an ambulance. When that happens the intersection abandons its
+      normal timetable and runs a special sequence instead. This diagram shows those two special
+      sequences: the upper path is the train one, the lower path is the ambulance one, and the box
+      on the right is the settling-down period afterwards where the intersection catches up on the
+      queues it just made wait. The question it really answers is what happens when both want
+      control at once.
+    </p>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 660" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <line x1="38" y1="260" x2="72" y2="260" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 136 220 V 128 Q 136 120 144 120 H 312" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <line x1="480" y1="120" x2="592" y2="120" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <path d="M 760 120 H 832 Q 840 120 840 128 V 212" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 136 300 V 432 Q 136 440 144 440 H 312" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="480" y1="440" x2="592" y2="440" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 760 440 H 912 Q 920 440 920 432 V 308" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 960 260 H 976 Q 984 260 984 268 V 552 Q 984 560 976 560 H 192 Q 184 560 184 552 V 308" fill="none" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#a)"/>
+
+      <rect x="164" y="100" width="128" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="228" y="109" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">TRAIN_APPROACHING</text>
+
+      <rect x="484" y="100" width="104" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="536" y="109" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">pocket empty &#8744; 20 s</text>
+
+      <rect x="760" y="100" width="72" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="796" y="109" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">GATES_UP</text>
+
+      <rect x="144" y="364" width="112" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="148" y="373" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">PREEMPT{ap, eta}</text>
+
+      <rect x="484" y="420" width="104" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="536" y="429" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">t &#8805; eta &#8722; 17 s</text>
+
+      <rect x="776" y="420" width="120" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="836" y="429" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">RESUME &#8744; watchdog</text>
+
+      <rect x="512" y="540" width="144" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="584" y="549" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">t &#8805; 30 s / boost ends</text>
+
+      <circle cx="32" cy="260" r="6" fill="#2d3142"/>
+
+      <rect x="80" y="220" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="80" y="220" width="160" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="160" y="256" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">NORMAL</text>
+      <text x="160" y="276" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plan owns the lights</text>
+
+      <rect x="320" y="80" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="320" y="80" width="160" height="80" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="400" y="116" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">RAIL FLUSH</text>
+      <text x="400" y="136" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">green to clear the pocket</text>
+
+      <rect x="600" y="80" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="600" y="80" width="160" height="80" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="680" y="116" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">RAIL HOLD</text>
+      <text x="680" y="136" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">toward-track red</text>
+
+      <rect x="320" y="400" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="320" y="400" width="160" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="400" y="436" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">EV ARMED</text>
+      <text x="400" y="456" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">waiting for the lead time</text>
+
+      <rect x="600" y="400" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="600" y="400" width="160" height="80" rx="8" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="680" y="436" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">EV ACTIVE</text>
+      <text x="680" y="456" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">EV approach held green</text>
+
+      <rect x="800" y="220" width="160" height="80" rx="8" fill="#f5f5f5"/>
+      <rect x="800" y="220" width="160" height="80" rx="8" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <text x="880" y="256" fill="#2d3142" font-size="16" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">RECOVERY</text>
+      <text x="880" y="276" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">boost &#215;1.5 for 30 s</text>
+
+      <line x1="60" y1="600" x2="940" y2="600" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="60" y="616" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <rect x="180" y="606" width="16" height="12" rx="3" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="204" y="616" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">rail path &#8212; highest priority</text>
+      <rect x="440" y="606" width="16" height="12" rx="3" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="464" y="616" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">EV path</text>
+      <line x1="620" y1="612" x2="652" y2="612" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4"/>
+      <text x="660" y="616" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">return to the coordinated plan</text>
+    </svg>
+    </div>
+    <figcaption>
+      Priority is <code>train &gt; EV &gt; normal</code>. A <code>TRAIN_APPROACHING</code>
+      arriving during <code>EV ACTIVE</code> takes the rail path immediately, but the EV's
+      green cannot be cut instantly &#8212; the mandatory yellow and all-red must still run.
+      That bounded wait is priority inversion, and its worst case is 5 s against a 30 s
+      warning. The watchdog on the <code>EV ACTIVE</code> exit is the fail-safe for a
+      <code>RESUME</code> that never arrives.
+    </figcaption>
+  </figure>
+
+  <!-- ================= 4. CONGESTION MSC ================= -->
+  <figure>
+    <p class="eyebrow">Figure 4 · Message sequence</p>
+    <h2>How a queue length becomes a changed green duration</h2>
+    <p class="plain">
+      <b>In plain terms.</b> This answers one specific question: when a queue gets too long, how
+      does that actually turn into a longer green light? No intersection is allowed to simply
+      decide to retime itself &#8212; it has to report the problem to the control room, and the
+      control room decides what to do. The diagram follows one such conversation from start to
+      finish. Read it top to bottom as time passing. Each vertical dashed line is one participant,
+      and each horizontal arrow is one message being sent from one to another.
+    </p>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 780" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ao" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker>
+      </defs>
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- lifelines -->
+      <line x1="140" y1="100" x2="140" y2="660" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="380" y1="100" x2="380" y2="660" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="620" y1="100" x2="620" y2="660" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="860" y1="100" x2="860" y2="660" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+
+      <!-- activation bars on central -->
+      <rect x="616" y="248" width="8" height="148" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+      <rect x="616" y="504" width="8" height="96" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+
+      <!-- messages -->
+      <line x1="140" y1="148" x2="372" y2="148" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+      <rect x="196" y="128" width="120" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="256" y="137" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">detector: q = 27.3 veh</text>
+
+      <path d="M 380 176 H 428 Q 436 176 436 184 V 204 Q 436 212 428 212 H 388" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="444" y="197" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">q &gt; 25 held for 20.0 s</text>
+
+      <line x1="380" y1="248" x2="612" y2="248" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+      <rect x="404" y="216" width="184" height="24" rx="2" fill="#f5f5f5"/>
+      <text x="496" y="225" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">CONGESTION_ALARM</text>
+      <text x="496" y="236" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">{approach:E, q:27.3, active:true}</text>
+
+      <path d="M 628 276 H 676 Q 684 276 684 284 V 304 Q 684 312 676 312 H 636" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="692" y="297" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">shift &#8804; 8 s, cycle stays 40 s</text>
+
+      <line x1="620" y1="348" x2="388" y2="348" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <rect x="404" y="316" width="184" height="24" rx="2" fill="#f5f5f5"/>
+      <text x="496" y="325" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SET_PLAN &#8212; the light changes here</text>
+      <text x="496" y="336" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">greenA 15.0 &#8594; 18.0 s</text>
+
+      <line x1="620" y1="396" x2="852" y2="396" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <rect x="644" y="364" width="184" height="24" rx="2" fill="#f5f5f5"/>
+      <text x="736" y="373" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SET_PLAN &#8212; meter the upstream</text>
+      <text x="736" y="384" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">feeding phase pinned to minGreen</text>
+
+      <path d="M 380 432 H 428 Q 436 432 436 440 V 460 Q 436 468 428 468 H 388" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="444" y="453" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">q falls below 15 &#8212; hysteresis</text>
+
+      <line x1="380" y1="504" x2="612" y2="504" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+      <rect x="404" y="484" width="184" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="496" y="493" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">CONGESTION_ALARM {active:false}</text>
+
+      <line x1="620" y1="552" x2="388" y2="552" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <rect x="428" y="532" width="136" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="496" y="541" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SET_PLAN greenA &#8594; 15.0 s</text>
+
+      <line x1="620" y1="600" x2="852" y2="600" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <rect x="668" y="580" width="136" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="736" y="589" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SET_PLAN restore Webster</text>
+
+      <!-- actors -->
+      <rect x="52" y="48" width="176" height="52" rx="6" fill="#f5f5f5"/>
+      <rect x="52" y="48" width="176" height="52" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <text x="140" y="72" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Detectors</text>
+      <text x="140" y="88" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">physics, in-process</text>
+
+      <rect x="292" y="48" width="176" height="52" rx="6" fill="#f5f5f5"/>
+      <rect x="292" y="48" width="176" height="52" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="380" y="72" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Local I5</text>
+      <text x="380" y="88" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">congested node</text>
+
+      <rect x="532" y="48" width="176" height="52" rx="6" fill="#f5f5f5"/>
+      <rect x="532" y="48" width="176" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="620" y="72" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Central</text>
+      <text x="620" y="88" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">control room</text>
+
+      <rect x="772" y="48" width="176" height="52" rx="6" fill="#f5f5f5"/>
+      <rect x="772" y="48" width="176" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="860" y="72" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Local I6</text>
+      <text x="860" y="88" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">upstream neighbour</text>
+
+      <line x1="60" y1="700" x2="940" y2="700" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="60" y="716" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <line x1="180" y1="712" x2="212" y2="712" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+      <text x="220" y="716" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">async notify (no reply)</text>
+      <line x1="450" y1="712" x2="482" y2="712" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="490" y="716" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">command</text>
+      <line x1="640" y1="712" x2="672" y2="712" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <text x="680" y="716" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">the message that changes the light</text>
+    </svg>
+    </div>
+    <figcaption>
+      This is the &#8220;unwritten mechanism&#8221;, written down. A number crosses a threshold,
+      the threshold has to hold for 20 s so the alarm cannot chatter, the alarm carries the
+      measurement as payload, central turns that measurement into a split arithmetic decision,
+      and the decision arrives back as a <code>SET_PLAN</code> whose delta is the visible change
+      in green duration. Nothing reads anyone else's memory &#8212; every step is a message.
+      The clear at 15 rather than 25 is deliberate hysteresis.
+    </figcaption>
+  </figure>
+
+  <!-- ================= 5. RAIL MSC ================= -->
+  <figure>
+    <p class="eyebrow">Figure 5 · Message sequence</p>
+    <h2>Rail preemption &#8212; from warning to recovery</h2>
+    <p class="plain">
+      <b>In plain terms.</b> Same kind of diagram as the one above &#8212; time runs downward,
+      arrows are messages &#8212; but this time following a single train through a crossing, from
+      the moment it is first detected to the moment traffic returns to normal. Three parties are
+      involved and none of them can see inside the others. The railway equipment cannot change a
+      traffic light and the traffic controller cannot move a barrier; they only tell each other
+      what has happened and each acts on its own equipment.
+    </p>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 780" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <line x1="180" y1="100" x2="180" y2="668" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="500" y1="100" x2="500" y2="668" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="820" y1="100" x2="820" y2="668" stroke="rgba(45,49,66,0.20)" stroke-width="1" stroke-dasharray="3,3"/>
+
+      <rect x="496" y="248" width="8" height="384" fill="rgba(45,49,66,0.06)" stroke="#4f5d75" stroke-width="0.8"/>
+
+      <line x1="180" y1="148" x2="492" y2="148" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+      <rect x="256" y="128" width="160" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="336" y="137" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">approach event, eta = 30.0 s</text>
+
+      <path d="M 500 176 H 548 Q 556 176 556 184 V 204 Q 556 212 548 212 H 508" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="564" y="197" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">commanded down, flashers on</text>
+
+      <line x1="500" y1="248" x2="812" y2="248" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <rect x="576" y="228" width="160" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="656" y="237" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">TRAIN_APPROACHING {A, 30.0}</text>
+
+      <path d="M 820 276 H 868 Q 876 276 876 284 V 304 Q 876 312 868 312 H 828" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <text x="884" y="297" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace">FLUSH</text>
+
+      <path d="M 500 348 H 548 Q 556 348 556 356 V 376 Q 556 384 548 384 H 508" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="564" y="369" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">proved down &#8594; CLOSED</text>
+
+      <path d="M 820 420 H 868 Q 876 420 876 428 V 448 Q 876 456 868 456 H 828" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <text x="884" y="441" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace">HOLD</text>
+
+      <line x1="180" y1="500" x2="492" y2="500" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+      <rect x="256" y="480" width="160" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="336" y="489" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">clear: rear past crossing + 80 m</text>
+
+      <path d="M 500 528 H 548 Q 556 528 556 536 V 556 Q 556 564 548 564 H 508" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="564" y="549" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">CLOSED &#8594; OPEN</text>
+
+      <line x1="500" y1="600" x2="812" y2="600" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <rect x="608" y="580" width="96" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="656" y="589" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">GATES_UP</text>
+
+      <path d="M 820 628 H 868 Q 876 628 876 636 V 648 Q 876 656 868 656 H 828" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="884" y="645" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">recovery boost, 30 s</text>
+
+      <rect x="92" y="48" width="176" height="52" rx="6" fill="#f5f5f5"/>
+      <rect x="92" y="48" width="176" height="52" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+      <text x="180" y="72" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Train</text>
+      <text x="180" y="88" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">physics, in-process</text>
+
+      <rect x="412" y="48" width="176" height="52" rx="6" fill="#f5f5f5"/>
+      <rect x="412" y="48" width="176" height="52" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="500" y="72" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Railway</text>
+      <text x="500" y="88" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">owns the gates</text>
+
+      <rect x="732" y="48" width="176" height="52" rx="6" fill="#f5f5f5"/>
+      <rect x="732" y="48" width="176" height="52" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="820" y="72" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Local I5</text>
+      <text x="820" y="88" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">crossing A</text>
+
+      <line x1="60" y1="708" x2="940" y2="708" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="60" y="724" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <line x1="180" y1="720" x2="212" y2="720" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#ao)"/>
+      <text x="220" y="724" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">sensor event (in-process)</text>
+      <line x1="460" y1="720" x2="492" y2="720" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <text x="500" y="724" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">typed message between processes</text>
+      <line x1="800" y1="720" x2="832" y2="720" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#aa)"/>
+      <text x="840" y="724" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">overlay stage</text>
+    </svg>
+    </div>
+    <figcaption>
+      The deadline argument lives in the vertical gaps. Everything between the first message and
+      <code>CLOSED</code> must fit inside <code>trainWarning</code> = 30 s: flush the pocket
+      (&#8804; 20 s), yellow (3 s), all-red (2 s), gate travel. The railway controller never sets a
+      light and the local controller never touches a gate &#8212; each owns its own hardware and
+      they agree only through messages, which is precisely what makes them separable processes.
+    </figcaption>
+  </figure>
+
+  <!-- ================= 6. TOPOLOGY ================= -->
+  <figure>
+    <p class="eyebrow">Figure 6 · Architecture</p>
+    <h2>Process topology and the nine typed messages</h2>
+    <p class="plain">
+      <b>In plain terms.</b> The two diagrams above showed conversations. This one shows who is
+      able to talk to whom in the first place. Every box is a separate program running on its own,
+      and the arrows are the channels between them. The table underneath lists every kind of
+      message the whole system uses. There are only nine, and that short list is the entire
+      shared vocabulary &#8212; if something cannot be said with one of these nine, the system
+      cannot do it.
+    </p>
+    <div class="scroll">
+    <svg viewBox="0 0 1000 700" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <path d="M 460 300 V 148" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 540 140 V 292" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 860 140 V 332 Q 860 340 852 340 H 608" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 752 100 H 608" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 440 140 V 232 Q 440 240 432 240 H 188 Q 180 240 180 248 V 292" fill="none" stroke="#4f5d75" stroke-width="1" marker-end="url(#a)"/>
+      <path d="M 500 520 V 388" fill="none" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4" marker-end="url(#a)"/>
+
+      <rect x="344" y="218" width="104" height="24" rx="2" fill="#f5f5f5"/>
+      <text x="452" y="227" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">STATUS_UPDATE</text>
+      <text x="452" y="238" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="end">CONGESTION_ALARM</text>
+
+      <rect x="548" y="206" width="88" height="36" rx="2" fill="#f5f5f5"/>
+      <text x="552" y="215" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">SET_PLAN</text>
+      <text x="552" y="226" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">PREEMPT</text>
+      <text x="552" y="237" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">RESUME</text>
+
+      <rect x="672" y="308" width="128" height="24" rx="2" fill="#f5f5f5"/>
+      <text x="736" y="317" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">TRAIN_APPROACHING</text>
+      <text x="736" y="328" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">GATES_UP</text>
+
+      <rect x="620" y="68" width="120" height="24" rx="2" fill="#f5f5f5"/>
+      <text x="680" y="77" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">GATE_FAULT</text>
+      <text x="680" y="88" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">ALARM</text>
+
+      <rect x="248" y="208" width="128" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="312" y="217" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SET_PLAN (metering)</text>
+
+      <rect x="508" y="444" width="112" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="512" y="453" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace">not a message</text>
+
+      <rect x="400" y="60" width="200" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="400" y="60" width="200" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="408" y="68" width="52" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="434" y="77" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PROCESS</text>
+      <text x="500" y="106" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">CentralController</text>
+      <text x="500" y="124" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">plans, alarms, operator</text>
+
+      <rect x="760" y="60" width="200" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="760" y="60" width="200" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="768" y="68" width="52" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="794" y="77" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PROCESS</text>
+      <text x="860" y="106" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">RailwayController</text>
+      <text x="860" y="124" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">gates A, B, C</text>
+
+      <rect x="400" y="300" width="200" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="400" y="300" width="200" height="80" rx="6" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <rect x="408" y="308" width="52" height="12" rx="2" fill="transparent" stroke="rgba(235,108,54,0.50)" stroke-width="0.8"/>
+      <text x="434" y="317" fill="#eb6c36" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PROCESS</text>
+      <text x="500" y="346" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">LocalController I5</text>
+      <text x="500" y="364" fill="#eb6c36" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">owns its own lights</text>
+
+      <rect x="80" y="300" width="200" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="80" y="300" width="200" height="80" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <rect x="88" y="308" width="52" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="114" y="317" fill="#4f5d75" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PROCESS</text>
+      <text x="180" y="346" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">LocalController I6</text>
+      <text x="180" y="364" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">one of six, all identical</text>
+
+      <rect x="400" y="520" width="200" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="400" y="520" width="200" height="80" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1"/>
+      <text x="500" y="558" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Detectors</text>
+      <text x="500" y="576" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">queue, gap, ped button</text>
+
+      <line x1="60" y1="640" x2="940" y2="640" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="60" y="656" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+      <rect x="180" y="646" width="16" height="12" rx="3" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <text x="204" y="656" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">separate address space</text>
+      <rect x="440" y="646" width="16" height="12" rx="3" fill="rgba(235,108,54,0.08)" stroke="#eb6c36" stroke-width="1"/>
+      <text x="464" y="656" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">the node under study</text>
+      <line x1="680" y1="652" x2="712" y2="652" stroke="#4f5d75" stroke-width="1" stroke-dasharray="5,4"/>
+      <text x="720" y="656" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace">in-process hardware read</text>
+    </svg>
+    </div>
+    <figcaption>
+      There is deliberately no arrow between I5 and I6. Locals never message each other; all
+      coordination goes through central. That is what lets each controller keep running when
+      the link to central dies, and it is why the design survives being split into six separate
+      QNX processes.
+    </figcaption>
+
+    <table>
+      <thead>
+        <tr><th>Message</th><th>From &#8594; To</th><th>Trigger</th><th>Payload</th><th>QNX primitive</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="msg">STATUS_UPDATE</td><td>Local &#8594; Central</td><td>Any signal state change</td><td>state, phase, plan, preempt</td><td class="qnx">MsgSendPulse</td></tr>
+        <tr><td class="msg">CONGESTION_ALARM</td><td>Local &#8594; Central</td><td>q &gt; 25 held 20 s; clears at 15</td><td>approach, q, active</td><td class="qnx">MsgSendPulse</td></tr>
+        <tr><td class="msg">SET_PLAN</td><td>Central &#8594; Local</td><td>Mode change or alarm</td><td>plan, cycle, greenA, greenB, offset</td><td class="qnx">MsgSend / MsgReply</td></tr>
+        <tr><td class="msg">PREEMPT</td><td>Central &#8594; Local</td><td>Operator dispatches an EV</td><td>approach, eta</td><td class="qnx">MsgSend / MsgReply</td></tr>
+        <tr><td class="msg">RESUME</td><td>Central &#8594; Local</td><td>EV passed the intersection</td><td>&#8212;</td><td class="qnx">MsgSend / MsgReply</td></tr>
+        <tr><td class="msg">TRAIN_APPROACHING</td><td>Railway &#8594; Local</td><td>eta &#8804; trainWarning (30 s)</td><td>crossing, eta</td><td class="qnx">MsgSendPulse</td></tr>
+        <tr><td class="msg">GATES_UP</td><td>Railway &#8594; Local</td><td>Gates fully OPEN again</td><td>crossing</td><td class="qnx">MsgSendPulse</td></tr>
+        <tr><td class="msg">GATE_FAULT</td><td>Railway &#8594; Central</td><td>Commanded state &#8800; sensed state</td><td>crossing</td><td class="qnx">MsgSendPulse</td></tr>
+        <tr><td class="msg">ALARM</td><td>Railway &#8594; Central</td><td>Any operator-visible fault</td><td>kind, detail</td><td class="qnx">MsgSendPulse</td></tr>
+      </tbody>
+    </table>
+  </figure>
+
+  <footer>HCMC traffic control &#183; design reference &#183; figures generated from the simulator source</footer>
+
+</div>
+</body>
+</html>
