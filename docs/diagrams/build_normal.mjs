@@ -1,43 +1,56 @@
-// 1/3 — How a green ends. The two schemes that decide green length, and the clearance both share.
+// 1/3 — One full 40 s cycle: where the plan comes from, how each green's length is decided,
+// where the pedestrian floor applies, and why the cycle closes at 40 s.
 import { writeFileSync } from "node:fs";
 import { Diagram } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/builder.mjs";
 import { renderTree } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/layout-engine.mjs";
-import { pool, start, end, gateway, task, serviceTask } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/bpmn.mjs";
+import { pool, start, end, gateway, task, serviceTask, subProcess } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/bpmn.mjs";
 
 const d = new Diagram("bpmn");
 
-const proc = pool("sig", "Deciding how long a green lasts", {
-  lanes: ["Peak — fixed-time", "Off-peak — actuated", "Road signal"],
-  gap: 78,
+const proc = pool("cyc", "One cycle — at peak A + B + 10 = 40 s; off-peak has no fixed cycle", {
+  lanes: ["Network plan", "Peak — fixed-time", "Off-peak — actuated", "Pedestrian", "Road signal"],
+  gap: 78, pad: 46,
 }, [
-  start("s1",  { lane: 0, col: 0, label: "Phase due" }),
-  gateway("g1",{ lane: 0, col: 1, label: "Which mode?" }),
-  serviceTask("t1", { lane: 0, col: 2, label: "Split from plan\n15 s" }),
-  serviceTask("t2", { lane: 1, col: 2, label: "Minimum green\n7 s" }),
-  serviceTask("t3", { lane: 1, col: 3, label: "Extend +2 s\nper detection" }),
-  gateway("g2", { lane: 1, col: 4, label: "Gap-out?" }),
-  task("t4", { lane: 2, col: 5, label: "GREEN\n≥ 12 s if WALK" }),
-  task("t5", { lane: 2, col: 6, label: "YELLOW · 3 s" }),
-  task("t6", { lane: 2, col: 7, label: "ALL-RED · 2 s" }),
-  end("e1",  { lane: 2, col: 8, label: "Next phase" }),
+  start("s1",       { lane: 0, col: 0,  label: "Cycle starts" }),
+  serviceTask("tp", { lane: 0, col: 1,  label: "Plan\ncycle 40 s\nA + B = 30 s" }),
+  gateway("g1",     { lane: 0, col: 2,  label: "Peak hours?" }),
+  serviceTask("t1", { lane: 1, col: 3,  label: "Take A's split\n18 · 15 · 12 by node" }),
+  serviceTask("t2", { lane: 2, col: 3,  label: "Minimum green\n7 s" }),
+  serviceTask("t3", { lane: 2, col: 4,  label: "Extend +2 s\nper detection" }),
+  gateway("g2",     { lane: 2, col: 5,  label: "Gap-out?" }),
+  gateway("g3",     { lane: 3, col: 6,  label: "WALK\nrequested?" }),
+  task("t4",        { lane: 3, col: 7,  label: "Green must be\n≥ 12 s" }),
+  task("t5",        { lane: 4, col: 8,  label: "GREEN\nphase A" }),
+  task("t6",        { lane: 4, col: 9,  label: "YELLOW\n3 s" }),
+  task("t7",        { lane: 4, col: 10, label: "ALL-RED\n2 s" }),
+  subProcess("pb",  { lane: 4, col: 11, label: "PHASE B\n15 + 3 + 2 s" }),
+  gateway("g4",     { lane: 4, col: 12, label: "Continue?" }),
+  end("e1",         { lane: 4, col: 13, label: "Mode change" }),
 ]);
 
 renderTree(d, proc, [40, 80]);
-d.title("1/3 · Deciding how long a green lasts");
+d.title("1/3 · One full cycle — where 40 s comes from");
 
-d.link("s1", "g1", "", { flow: true, rounded: true });
+d.link("s1", "tp", "", { flow: true, rounded: true });
+d.link("tp", "g1", "", { flow: true, rounded: true });
 d.link("g1", "t1", "peak", { flow: true, rounded: true });
 d.link("g1", "t2", "off-peak", { flow: true, rounded: true });
-d.link("t1", "t4", "", { flow: true, rounded: true });
+d.link("t1", "g3", "", { flow: true, rounded: true });
 d.link("t2", "t3", "", { flow: true, rounded: true });
 d.link("t3", "g2", "", { flow: true, rounded: true });
 d.link("g2", "t3", "extend", { rounded: true });
-d.link("g2", "t4", "end green", { flow: true, rounded: true });
+d.link("g2", "g3", "end green — cycle varies 20–50 s", { flow: true, rounded: true });
+d.link("g3", "t4", "yes", { rounded: true });
+d.link("g3", "t5", "no", { flow: true, rounded: true });
 d.link("t4", "t5", "", { flow: true, rounded: true });
 d.link("t5", "t6", "", { flow: true, rounded: true });
-d.link("t6", "e1", "", { flow: true, rounded: true });
+d.link("t6", "t7", "", { flow: true, rounded: true });
+d.link("t7", "pb", "", { flow: true, rounded: true });
+d.link("pb", "g4", "", { flow: true, rounded: true });
+d.link("g4", "t5", "peak: repeat every 40 s", { rounded: true });
+d.link("g4", "e1", "mode changed", { rounded: true });
 
-writeFileSync(new URL("./1-normal-cycle.drawio", import.meta.url), d.mxfile("1 · Deciding how long a green lasts"));
+writeFileSync(new URL("./1-normal-cycle.drawio", import.meta.url), d.mxfile("1 · One full cycle"));
 
 import { execFileSync as __exec } from "node:child_process";
 try {

@@ -10,6 +10,9 @@ export const CONFIG = {
   // road physics
   satFlowPerLane: 0.6,  // veh/s/lane discharge on green (motorbike-adjusted; car-only ≈0.5)
   lanes: 2,             // per direction, all roads
+  // Discharge capacity of ONE approach (both lanes). Demand λ below is quoted at
+  // this same scope, so y = λ / satFlowPerApproach compares like with like.
+  get satFlowPerApproach() { return this.satFlowPerLane * this.lanes; },   // 1.2 veh/s
   vehicleLength: 7,     // m of road one queued vehicle occupies
   speedKmh: 40,         // free-flow link speed
   evSpeedKmh: 50,       // priority vehicle speed (traffic parts)
@@ -44,7 +47,7 @@ export const CONFIG = {
   // incidents
   accidentDuration: 300,   // s default
 
-  // demand λ (veh/s per approach) by road class and mode
+  // demand λ (veh/s per APPROACH — both lanes, same scope as satFlowPerApproach)
   // calibrated so the network is BUSY but stable at peak even though rail
   // preemption steals green time at I1/I2/I5 every 2 minutes (see TIMINGS.md §5)
   demand: {

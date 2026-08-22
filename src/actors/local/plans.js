@@ -24,7 +24,7 @@ import { PHASES, APPROACHES, DIRS, MAIN_PHASE, linkById, approachClass } from '.
  * @param {string} node @param {'PEAK'|'OFFPEAK'|'NIGHT'} mode
  */
 export function websterPlan(node, mode, offset = 0, cycleOverride = null) {
-  const s = CONFIG.satFlowPerLane * CONFIG.lanes;
+  const s = CONFIG.satFlowPerApproach;
   const y = { A: 0, B: 0 };
   for (const ph of /** @type {const} */ (['A', 'B'])) {
     for (const d of PHASES[ph]) {

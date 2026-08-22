@@ -107,7 +107,7 @@ export class TrafficModel {
           if (!p.entryOpen) continue;             // gate down: hold at stop line
           capFactor = p.capFactor;                // accident throttle
         }
-        const rate = CONFIG.satFlowPerLane * CONFIG.lanes * factor * capFactor;
+        const rate = CONFIG.satFlowPerApproach * factor * capFactor;
         const n = Math.min(a.q, rate * dt);
         a.q -= n;
         if (tgt.type === 'exit') this.totOut += n;
