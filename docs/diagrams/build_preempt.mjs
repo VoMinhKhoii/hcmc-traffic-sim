@@ -1,0 +1,54 @@
+// 2/3 — The interrupt. A train arrives; normal control is suspended until the crossing is proved safe.
+import { writeFileSync } from "node:fs";
+import { Diagram } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/builder.mjs";
+import { renderTree } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/layout-engine.mjs";
+import { pool, start, end, gateway, task, serviceTask } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/bpmn.mjs";
+
+const d = new Diagram("bpmn");
+
+const proc = pool("pre", "Train preemption at crossing C — and what happens when the gate cannot prove itself", {
+  lanes: ["Central", "Local controller I1", "Road signal", "Gates C", "Train"],
+  gap: 78,
+}, [
+  start("s1", { lane: 4, col: 0, label: "Train 30 s out", type: "message" }),
+  serviceTask("t1", { lane: 1, col: 1, label: "Preempt\nrequest" }),
+  task("t2",       { lane: 2, col: 2, label: "Pocket flush GREEN\n20 s" }),
+  serviceTask("t3",{ lane: 1, col: 3, label: "Command gates\nDOWN" }),
+  serviceTask("t4",{ lane: 3, col: 4, label: "Barriers travel\n8 s" }),
+  gateway("g1",    { lane: 3, col: 5, label: "Proved\n≤ 10 s?" }),
+  serviceTask("t5",{ lane: 3, col: 6, label: "CLOSED\nproof received" }),
+  task("t9",       { lane: 4, col: 6, label: "Held at the\n80 m signal" }),
+  task("t6",       { lane: 2, col: 7, label: "Both directions\nRED" }),
+  serviceTask("ta",{ lane: 0, col: 7, label: "Raise GATE_FAULT\nalarm" }),
+  end("e2",        { lane: 3, col: 8, label: "BROKEN", type: "error" }),
+  task("t7",       { lane: 4, col: 8, label: "Train passes" }),
+  serviceTask("t8",{ lane: 3, col: 9, label: "Gates UP" }),
+  serviceTask("t10",{ lane: 1, col: 10, label: "Resume normal\ncontrol" }),
+  end("e1",        { lane: 1, col: 11, label: "Normal service" }),
+]);
+
+renderTree(d, proc, [40, 80]);
+d.title("2/3 · Train preemption — the interrupt that outranks every mode");
+
+d.link("s1", "t1", "approaching", { flow: true, rounded: true });
+d.link("t1", "t2", "preempt", { flow: true, rounded: true });
+d.link("t2", "t3", "clear", { flow: true, rounded: true });
+d.link("t3", "t4", "close", { flow: true, rounded: true });
+d.link("t4", "g1", "", { flow: true, rounded: true });
+d.link("g1", "t5", "proved", { flow: true, rounded: true });
+d.link("g1", "t9", "timeout", { rounded: true });
+d.link("t9", "ta", "GATE_FAULT", { rounded: true });
+d.link("ta", "e2", "", { rounded: true });
+d.link("t5", "t6", "confirmed", { flow: true, rounded: true });
+d.link("t6", "t7", "protected", { flow: true, rounded: true });
+d.link("t7", "t8", "clear", { flow: true, rounded: true });
+d.link("t8", "t10", "", { flow: true, rounded: true });
+d.link("t10", "e1", "", { flow: true, rounded: true });
+
+writeFileSync(new URL("./2-train-preemption.drawio", import.meta.url), d.mxfile("2 · Train preemption"));
+
+import { execFileSync as __exec } from "node:child_process";
+try {
+  const __f = new URL("./2-train-preemption.drawio", import.meta.url).pathname;
+  console.log(__exec("drawio-ai", ["render", __f, "--check", "--page", "1", "-o", __f + ".png"], { encoding: "utf8" }).trim());
+} catch (e) { console.error("RENDER-SKIPPED:", String(e.message).split("\n")[0]); }
