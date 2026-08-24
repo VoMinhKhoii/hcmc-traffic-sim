@@ -66,6 +66,21 @@ export const CONFIG = {
   recoveryBoost: 1.3,      // first-green multiplier repaying held queues
 };
 
+// Pedestrian-safety invariant, checked at startup: the split calculation floors each
+// phase at walkMin and then rebalances the pair to fill the cycle, so a green can be
+// pulled back UNDER the floor unless both phases fit at the shortest cycle we publish.
+// Nothing downstream re-checks it — fixed-time is a pure clock — so it fails loudly here.
+{
+  const lost = 2 * (CONFIG.yellow + CONFIG.allRed);
+  const effective = CONFIG.cycleMin - lost;
+  if (effective < 2 * CONFIG.walkMin) {
+    throw new Error(
+      `config: cycleMin ${CONFIG.cycleMin}s leaves ${effective}s of green, but two phases each ` +
+      `need walkMin ${CONFIG.walkMin}s to cross. Raise cycleMin to ${2 * CONFIG.walkMin + lost}s ` +
+      `or lower walkMin to ${effective / 2}s.`);
+  }
+}
+
 // time-of-day → mode. Peak 6:30–9:30 & 16:00–19:00, night 23:00–4:00.
 export function modeAt(hour) {
   const h = ((hour % 24) + 24) % 24;

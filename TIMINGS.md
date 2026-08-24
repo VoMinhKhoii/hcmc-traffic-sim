@@ -75,6 +75,21 @@ Crossing a 2×2-lane road ≈ 14 m at 1.2 m/s (design walking speed)
 ≈ 11.7 → **12 s**. Any green carrying a WALK must be ≥ 12 s; Webster splits
 are floored accordingly.
 
+**Design rule — `C − L ≥ 2 × walkMin`.** The split calculation floors each phase
+at `walkMin` and then rebalances the pair to fill the cycle, so the rebalance can
+pull a green back *under* the floor unless both phases fit. At peak WALK is shown
+every cycle, so this binds on every green, not only requested ones. With
+`cycleMin = 40` and `L = 10`, `30 ≥ 24` holds with 6 s to spare — which is why I4
+and I6 sit exactly on 12 s and their partner phase takes 18 s rather than its
+proportional share.
+
+It holds by arithmetic, not by construction: at `cycleMin = 32` the shortest green
+becomes 10 s, and at `walkMin = 16` (a wider crossing) it becomes 14 s — both below
+the floor, both published without complaint, because fixed-time control is a pure
+clock with no runtime minimum. `config.js` therefore asserts the rule at startup and
+refuses to load otherwise. Central's two re-timing paths (self-retime, metering)
+clamp against the floor explicitly and are safe on their own.
+
 ## 9. Railway crossings and preemption timeline
 
 A and B retain their surveyed/modelled **110 m** stop-line pockets. Crossing C

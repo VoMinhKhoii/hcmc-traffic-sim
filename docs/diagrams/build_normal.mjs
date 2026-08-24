@@ -30,7 +30,7 @@ const proc = pool("cyc", "One cycle — at peak A + B + 10 = 40 s; off-peak has 
   start("s1",       { lane: 0, col: 0,  label: "Cycle starts" }),
   svc("tp",       { lane: 0, col: 1,  label: "Plan\ncycle 40 s\nA + B = 30 s" }),
   gatewayTop("g1",     { lane: 0, col: 2,  label: "Peak hours?" }),
-  svc("t1",       { lane: 1, col: 7,  label: "Take A's split\n18 \u00b7 15 \u00b7 12 s by node" }),
+  svc("t1",       { lane: 1, col: 7,  label: "Take A's split\n18 \u00b7 15 \u00b7 12 s (\u2265 12 s)" }),
   gateway("g3",     { lane: 3, col: 3,  label: "WALK on\nthis phase?" }),
   task("t4",        { lane: 3, col: 4,  label: "Minimum green\n12 s\n(crossing time)" }),
   svc("t2",       { lane: 2, col: 4,  label: "Minimum green\n7 s" }),
