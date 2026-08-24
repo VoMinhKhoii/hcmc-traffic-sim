@@ -2,7 +2,7 @@
 // actors/local/plans.js — the three light-sequence patterns a local can run,
 // selected by SET_PLAN from central (matches the brief's pattern list):
 //   FIXED    — Webster cycle + splits + corridor offset (peak, coordinated)
-//   ACTUATED — min green / extend / gap-out / max green / skip-empty (off-peak)
+//   ACTUATED — min green / hold-while-detected / gap-out / max green / skip-empty (off-peak)
 //   FLASH    — night: main flashes yellow, side flashes red; ped button
 //              summons one full signal cycle, then back to flash
 // A plan only ever asks the SignalMachine to change phase; it never touches

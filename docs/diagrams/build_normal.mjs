@@ -7,25 +7,41 @@ import { pool, start, end, gateway, task, serviceTask, subProcess } from "/Users
 
 const d = new Diagram("bpmn");
 
+// Gateway labels render below the diamond by default, where the router also likes to
+// run horizontal segments — every long return edge struck one. Flip these three above,
+// into lane space that is empty at their column.
+const svc = (id, opts) => {
+  const n = serviceTask(id, opts);
+  n.h = 90;   // taller than the catalog default so the centred label clears the gear marker
+  return n;
+};
+
+const gatewayTop = (id, opts) => {
+  const g = gateway(id, opts);
+  g.style = g.style.replace("verticalLabelPosition=bottom", "verticalLabelPosition=top")
+                   .replace("verticalAlign=top", "verticalAlign=bottom");
+  return g;
+};
+
 const proc = pool("cyc", "One cycle — at peak A + B + 10 = 40 s; off-peak has no fixed cycle", {
   lanes: ["Network plan", "Peak — fixed-time", "Off-peak — actuated", "Pedestrian", "Road signal"],
-  gap: 130, pad: 64,
+  gap: 96, pad: 56,
 }, [
   start("s1",       { lane: 0, col: 0,  label: "Cycle starts" }),
-  serviceTask("tp", { lane: 0, col: 1,  label: "Plan\ncycle 40 s\nA + B = 30 s" }),
-  gateway("g1",     { lane: 0, col: 2,  label: "Peak hours?" }),
-  serviceTask("t1", { lane: 1, col: 3,  label: "Take A's split\n18 \u00b7 15 \u00b7 12 s\n(ped floor applied)" }),
+  svc("tp",       { lane: 0, col: 1,  label: "Plan\ncycle 40 s\nA + B = 30 s" }),
+  gatewayTop("g1",     { lane: 0, col: 2,  label: "Peak hours?" }),
+  svc("t1",       { lane: 1, col: 7,  label: "Take A's split\n18 \u00b7 15 \u00b7 12 s by node" }),
   gateway("g3",     { lane: 3, col: 3,  label: "WALK on\nthis phase?" }),
   task("t4",        { lane: 3, col: 4,  label: "Minimum green\n12 s\n(crossing time)" }),
-  serviceTask("t2", { lane: 2, col: 4,  label: "Minimum green\n7 s" }),
-  serviceTask("t3", { lane: 2, col: 5,  label: "Hold green while\ndetector live" }),
-  gateway("g2",     { lane: 2, col: 6,  label: "End this\ngreen?" }),
+  svc("t2",       { lane: 2, col: 4,  label: "Minimum green\n7 s" }),
+  svc("t3",       { lane: 2, col: 5,  label: "Hold green while\ndetector live" }),
+  gatewayTop("g2",     { lane: 2, col: 6,  label: "End this\ngreen?" }),
   task("t8",        { lane: 2, col: 7,  label: "Nobody waiting:\nrest on green\n\u2014 no cycle at all" }),
   task("t5",        { lane: 4, col: 8,  label: "GREEN\nphase A" }),
   task("t6",        { lane: 4, col: 9,  label: "YELLOW\n3 s" }),
   task("t7",        { lane: 4, col: 10, label: "ALL-RED\n2 s" }),
   subProcess("pb",  { lane: 4, col: 11, label: "PHASE B\nsame rules,\nother direction" }),
-  gateway("g4",     { lane: 4, col: 12, label: "Continue?" }),
+  gatewayTop("g4",     { lane: 4, col: 12, label: "Continue?" }),
   end("e1",         { lane: 4, col: 13, label: "Mode change" }),
 ]);
 
@@ -58,5 +74,5 @@ writeFileSync(new URL("./1-normal-cycle.drawio", import.meta.url), d.mxfile("1 �
 import { execFileSync as __exec } from "node:child_process";
 try {
   const __f = new URL("./1-normal-cycle.drawio", import.meta.url).pathname;
-  console.log(__exec("drawio-ai", ["render", __f, "--check", "--page", "1", "-o", __f + ".png"], { encoding: "utf8" }).trim());
+  console.log(__exec("drawio-ai", ["render", __f, "--check", "--page", "1", "--scale", "2", "-o", __f + ".png"], { encoding: "utf8" }).trim());
 } catch (e) { console.error("RENDER-SKIPPED:", String(e.message).split("\n")[0]); }

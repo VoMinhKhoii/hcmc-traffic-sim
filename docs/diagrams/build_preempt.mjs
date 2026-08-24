@@ -6,24 +6,36 @@ import { pool, start, end, gateway, task, serviceTask } from "/Users/khoivo/.nvm
 
 const d = new Diagram("bpmn");
 
+// Catalog service tasks are just tall enough for their label, which then sits under the
+// gear marker. 90 px keeps the centred text clear of it.
+const svc = (id, opts) => { const n = serviceTask(id, opts); n.h = 90; return n; };
+
+// Event/gateway labels sit below the shape, where the router also runs horizontal
+// segments. Flip the ones that get struck above the shape instead.
+const labelAbove = (n) => {
+  n.style = n.style.replace("verticalLabelPosition=bottom", "verticalLabelPosition=top")
+                   .replace("verticalAlign=top", "verticalAlign=bottom");
+  return n;
+};
+
 const proc = pool("pre", "Train preemption at crossing C — and what happens when the gate cannot prove itself", {
   lanes: ["Central", "Local controller I1", "Road signal", "Gates C", "Train"],
   gap: 78,
 }, [
   start("s1", { lane: 4, col: 0, label: "Train 30 s out", type: "message" }),
-  serviceTask("t1", { lane: 1, col: 1, label: "Preempt\nrequest" }),
+  svc("t1", { lane: 1, col: 1, label: "Preempt\nrequest" }),
   task("t2",       { lane: 2, col: 2, label: "Pocket flush GREEN\n20 s" }),
-  serviceTask("t3",{ lane: 1, col: 3, label: "Command gates\nDOWN" }),
-  serviceTask("t4",{ lane: 3, col: 4, label: "Barriers travel\n8 s" }),
+  svc("t3",{ lane: 1, col: 3, label: "Command gates\nDOWN" }),
+  svc("t4",{ lane: 3, col: 4, label: "Barriers travel\n8 s" }),
   gateway("g1",    { lane: 3, col: 5, label: "Proved\n≤ 10 s?" }),
-  serviceTask("t5",{ lane: 3, col: 6, label: "CLOSED\nproof received" }),
+  svc("t5",{ lane: 3, col: 6, label: "CLOSED\nproof received" }),
   task("t9",       { lane: 4, col: 6, label: "Held at the\n80 m signal" }),
   task("t6",       { lane: 2, col: 7, label: "Both directions\nRED" }),
-  serviceTask("ta",{ lane: 0, col: 7, label: "Raise GATE_FAULT\nalarm" }),
-  end("e2",        { lane: 3, col: 8, label: "BROKEN", type: "error" }),
+  svc("ta",{ lane: 0, col: 7, label: "Raise GATE_FAULT\nalarm" }),
+  end("e2",        { lane: 0, col: 8, label: "BROKEN", type: "error" }),
   task("t7",       { lane: 4, col: 8, label: "Train passes" }),
-  serviceTask("t8",{ lane: 3, col: 9, label: "Gates UP" }),
-  serviceTask("t10",{ lane: 1, col: 10, label: "Resume normal\ncontrol" }),
+  svc("t8",{ lane: 3, col: 9, label: "Gates UP" }),
+  svc("t10",{ lane: 1, col: 10, label: "Resume normal\ncontrol" }),
   end("e1",        { lane: 1, col: 11, label: "Normal service" }),
 ]);
 
@@ -50,5 +62,5 @@ writeFileSync(new URL("./2-train-preemption.drawio", import.meta.url), d.mxfile(
 import { execFileSync as __exec } from "node:child_process";
 try {
   const __f = new URL("./2-train-preemption.drawio", import.meta.url).pathname;
-  console.log(__exec("drawio-ai", ["render", __f, "--check", "--page", "1", "-o", __f + ".png"], { encoding: "utf8" }).trim());
+  console.log(__exec("drawio-ai", ["render", __f, "--check", "--page", "1", "--scale", "2", "-o", __f + ".png"], { encoding: "utf8" }).trim());
 } catch (e) { console.error("RENDER-SKIPPED:", String(e.message).split("\n")[0]); }

@@ -23,7 +23,6 @@ export const CONFIG = {
   minGreen: 7,          // s — actuated minimum
   maxGreen: 40,         // s — actuated cap
   gapOut: 3,            // s without detection ends actuated green
-  extend: 2,            // s green extension per detection
   walkMin: 12,          // s — 2x2-lane crossing / 1.2 m/s
   cycleMin: 40, cycleMax: 120,   // Webster clamp
 
