@@ -1,5 +1,4 @@
-// 1/3 — One green, decided: who is waiting on the cross road, whether this green may
-// end yet, and how the two modes differ in what happens after.
+// 1/3 — One green, in all three modes. What decides its length, and what ends it.
 import { writeFileSync } from "node:fs";
 import { Diagram } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/builder.mjs";
 import { renderTree } from "/Users/khoivo/.nvm/versions/node/v22.12.0/lib/node_modules/drawio-ai-kit/src/layout-engine.mjs";
@@ -20,64 +19,77 @@ const gatewayTop = (id, opts) => {
   return g;
 };
 
-const proc = pool("cyc", "One green — at peak the cycle is always 40 s; off-peak there is no fixed cycle", {
-  lanes: ["Network plan", "Peak — fixed-time", "Off-peak — actuated", "Pedestrian", "Road signal"],
+const proc = pool("cyc", "All three modes — peak 06:30–09:30 & 16:00–19:00 · night 23:00–04:00 · off-peak the rest", {
+  lanes: ["Central", "Peak — fixed-time", "Off-peak — actuated", "Pedestrian", "Night — flash", "Road signal"],
   gap: 96, pad: 56,
 }, [
-  start("s1",       { lane: 0, col: 0,  label: "Cycle starts" }),
-  svc("tp",         { lane: 0, col: 1,  label: "Plan\ncycle 40 s\nA + B = 30 s" }),
-  gatewayTop("g1",  { lane: 0, col: 2,  label: "Peak hours?" }),
+  start("s1",       { lane: 0, col: 0,  label: "Controller starts" }),
+  svc("tp",         { lane: 0, col: 1,  label: "Publish this\nmode's plan" }),
+  gatewayTop("g1",  { lane: 0, col: 2,  label: "Which mode?" }),
 
+  // ---- off-peak: one question, asked over and over
   gateway("gp",     { lane: 3, col: 3,  label: "Pedestrian waiting\non cross road?" }),
   task("t3",        { lane: 2, col: 3,  label: "Hold green on\ncurrent road" }),
   gatewayTop("gv",  { lane: 2, col: 4,  label: "Vehicle waiting on cross road?" }),
-  svc("t2",         { lane: 2, col: 5,  label: "Next green\n\u2265 7 s" }),
-  svc("t4",         { lane: 3, col: 6,  label: "Next green \u2265 12 s\n(crossing time)" }),
-  gatewayTop("gd",  { lane: 2, col: 6,  label: "Current green done?\n(min served, gapped)" }),
+  svc("t2",         { lane: 2, col: 5,  label: "Next green\n≥ 7 s" }),
+  svc("t4",         { lane: 3, col: 5,  label: "Next green ≥ 12 s\n(crossing time)" }),
+  gateway("gd",     { lane: 2, col: 6,  label: "Current green done?" }),
 
-  svc("t1",         { lane: 1, col: 7,  label: "Take A's split\n18 · 15 · 12 s (≥ 12 s)" }),
+  // ---- peak: no questions at all
+  svc("t1",         { lane: 1, col: 6,  label: "Take A's split\n18 · 15 · 12 s (≥ 12 s)" }),
 
-  task("t5",        { lane: 4, col: 8,  label: "GREEN\nphase A" }),
-  task("t6",        { lane: 4, col: 9,  label: "YELLOW\n3 s" }),
-  task("t7",        { lane: 4, col: 10, label: "ALL-RED\n2 s" }),
-  subProcess("pb",  { lane: 4, col: 11, label: "PHASE B\nsame rules,\nother direction" }),
-  gatewayTop("g4",  { lane: 4, col: 12, label: "Continue?" }),
-  end("e1",         { lane: 4, col: 13, label: "Mode change" }),
+  // ---- night: not a cycle at all
+  task("nf",        { lane: 4, col: 2,  label: "FLASH\nmain yellow,\nside red" }),
+  gateway("gn",     { lane: 4, col: 3,  label: "Ped button?" }),
+  subProcess("t9",  { lane: 4, col: 4,  label: "One cycle on request:\nALL-RED, WALK green ≥ 12 s,\nother phase ≥ 7 s" }),
+  end("en",         { lane: 4, col: 5,  label: "04:00 — day plan resumes" }),
+
+  // ---- what the signal head does
+  task("t6",        { lane: 5, col: 7,  label: "YELLOW\n3 s" }),
+  task("t7",        { lane: 5, col: 8,  label: "ALL-RED\n2 s" }),
+  task("pb",        { lane: 5, col: 9,  label: "Cross road GREEN\n(the minimum\njust decided)" }),
+  gatewayTop("g4",  { lane: 5, col: 10, label: "Continue?" }),
+  end("e1",         { lane: 5, col: 11, label: "Mode change" }),
 ]);
 
 renderTree(d, proc, [40, 80]);
-d.title("1/3 · One green — what decides its length, and what happens after");
+d.title("1/3 · One green — peak, off-peak and night in one picture");
 
 d.link("s1", "tp", "", { flow: true, rounded: true });
 d.link("tp", "g1", "", { flow: true, rounded: true });
 d.link("g1", "t1", "peak", { flow: true, rounded: true });
 d.link("g1", "gp", "off-peak", { flow: true, rounded: true });
+d.link("g1", "nf", "night", { flow: true, rounded: true });
 
-// the continuous cross-road check
+// off-peak: the loop IS the control law
 d.link("gp", "t4", "yes", { rounded: true });
 d.link("gp", "gv", "no", { flow: true, rounded: true });
 d.link("gv", "t2", "yes", { flow: true, rounded: true });
 d.link("gv", "t3", "no", { rounded: true });
 d.link("t3", "gp", "keep asking", { rounded: true });
-
 d.link("t2", "gd", "", { flow: true, rounded: true });
 d.link("t4", "gd", "", { rounded: true });
-d.link("gd", "gp", "not yet", { rounded: true });
-d.link("gd", "t5", "end green", { flow: true, rounded: true });
+d.link("gd", "t3", "not yet — min unserved, or still flowing", { rounded: true });
+d.link("gd", "t6", "end green — or forced at 40 s", { flow: true, rounded: true });
 
-d.link("t1", "t5", "split already ≥ 12 s — no runtime ped check", { flow: true, rounded: true });
+// peak: straight through
+d.link("t1", "t6", "split already ≥ 12 s — no runtime check", { flow: true, rounded: true });
 
-d.link("t5", "t6", "", { flow: true, rounded: true });
+// night: its own small loop, and its own exit
+d.link("nf", "gn", "", { flow: true, rounded: true });
+d.link("gn", "t9", "pressed", { rounded: true });
+d.link("gn", "nf", "no — keep flashing", { rounded: true });
+d.link("t9", "nf", "back to flash", { rounded: true });
+d.link("gn", "en", "04:00", { rounded: true });
+
 d.link("t6", "t7", "", { flow: true, rounded: true });
 d.link("t7", "pb", "", { flow: true, rounded: true });
 d.link("pb", "g4", "", { flow: true, rounded: true });
-
-// the two modes rejoin at different places — that IS the difference between them
 d.link("g4", "t1", "peak — next cycle, always 40 s", { rounded: true });
-d.link("g4", "t3", "off-peak — next green, no fixed period", { rounded: true });
+d.link("g4", "t3", "off-peak — no fixed period", { rounded: true });
 d.link("g4", "e1", "mode changed", { rounded: true });
 
-writeFileSync(new URL("./1-normal-cycle.drawio", import.meta.url), d.mxfile("1 · One full cycle"));
+writeFileSync(new URL("./1-normal-cycle.drawio", import.meta.url), d.mxfile("1 · One green, all three modes"));
 
 import { execFileSync as __exec } from "node:child_process";
 try {
