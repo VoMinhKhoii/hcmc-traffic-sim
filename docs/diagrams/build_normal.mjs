@@ -36,7 +36,7 @@ const proc = pool("cyc", "One cycle — at peak A + B + 10 = 40 s; off-peak has 
   svc("t2",       { lane: 2, col: 4,  label: "Minimum green\n7 s" }),
   svc("t3",       { lane: 2, col: 5,  label: "Hold green while\ndetector live" }),
   gatewayTop("g2",     { lane: 2, col: 6,  label: "End this\ngreen?" }),
-  task("t8",        { lane: 2, col: 7,  label: "Nobody waiting:\nrest on green\n\u2014 no cycle at all" }),
+  task("t8",        { lane: 2, col: 7,  label: "No cross-street vehicle\nor ped: rest on green\n\u2014 no cycle at all" }),
   task("t5",        { lane: 4, col: 8,  label: "GREEN\nphase A" }),
   task("t6",        { lane: 4, col: 9,  label: "YELLOW\n3 s" }),
   task("t7",        { lane: 4, col: 10, label: "ALL-RED\n2 s" }),
@@ -66,7 +66,7 @@ d.link("t5", "t6", "", { flow: true, rounded: true });
 d.link("t6", "t7", "", { flow: true, rounded: true });
 d.link("t7", "pb", "", { flow: true, rounded: true });
 d.link("pb", "g4", "", { flow: true, rounded: true });
-d.link("g4", "t5", "peak: repeat every 40 s", { rounded: true });
+d.link("g4", "g1", "next green \u2014 decide again (at peak, every 40 s)", { rounded: true });
 d.link("g4", "e1", "mode changed", { rounded: true });
 
 writeFileSync(new URL("./1-normal-cycle.drawio", import.meta.url), d.mxfile("1 · One full cycle"));
