@@ -165,8 +165,24 @@ scenario(7, 'Off-peak: no WALK without button; button forces skipped phase', () 
     const m = sim.locals.I5.machine;
     if (m.state === 'GREEN' && m.phase === want) { served = true; break; }
   }
-  CONFIG.demandMultiplier = 1;
   assert(served, 'button did not force the skipped phase');
+  // and the WALK it forced must survive long enough to cross: the summoned green
+  // has to hold for walkMin, not fall back to the 7 s vehicle minimum.
+  let walkT = 0;
+  const other = want === 'A' ? 'N' : 'E';   // a direction of the CROSS phase, so this green can end
+  sim.model.ap('I5', other).q += 1;          // give the cross road demand so it can end
+  const t0 = sim.clock.t;
+  let greenT = 0;
+  for (let i = 0; i < 1200; i++) {
+    sim.step();
+    const m = sim.locals.I5.machine;
+    if (m.state === 'GREEN' && m.phase === want) { greenT = sim.clock.t - t0; if (m.walk) walkT += CONFIG.dt; }
+    else break;
+  }
+  CONFIG.demandMultiplier = 1;
+  assert(walkT >= CONFIG.walkMin - 0.2, `WALK shown for only ${walkT.toFixed(1)}s, needs ${CONFIG.walkMin}s`);
+  assert(greenT >= CONFIG.walkMin - 0.2, `summoned green ran ${greenT.toFixed(1)}s, below walkMin ${CONFIG.walkMin}s`);
+  return `WALK held ${walkT.toFixed(1)}s, green ${greenT.toFixed(1)}s`;
 });
 
 scenario(8, 'Single train at peak: preemption, pocket safe, recovery', () => {

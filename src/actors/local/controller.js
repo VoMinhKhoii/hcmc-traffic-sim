@@ -68,7 +68,11 @@ export class LocalController {
     // are cleared ONLY when their WALK is actually displayed.
     const m = this.machine;
     let served = [];
-    if (m.state === 'GREEN' && m.stateT <= dt + 1e-9) {
+    // stateT is exactly 0 on the tick the green begins and >= dt on every tick after,
+    // so `< dt/2` fires the latch once. `<= dt` fired it twice, and the second firing
+    // re-read a button the first had already cleared — dropping WALK after one tick and
+    // reverting the minimum from walkMin to minGreen.
+    if (m.state === 'GREEN' && m.stateT < dt / 2) {
       const btn = PHASES[m.phase].some((d) => sensors[d].pedButton);
       m.walk = this.plan.type === 'FIXED' || btn;
       if (m.walk) served = PHASES[m.phase];
