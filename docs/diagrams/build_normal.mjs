@@ -9,40 +9,43 @@ const d = new Diagram("bpmn");
 
 const proc = pool("cyc", "One cycle — at peak A + B + 10 = 40 s; off-peak has no fixed cycle", {
   lanes: ["Network plan", "Peak — fixed-time", "Off-peak — actuated", "Pedestrian", "Road signal"],
-  gap: 78, pad: 46,
+  gap: 130, pad: 64,
 }, [
   start("s1",       { lane: 0, col: 0,  label: "Cycle starts" }),
   serviceTask("tp", { lane: 0, col: 1,  label: "Plan\ncycle 40 s\nA + B = 30 s" }),
   gateway("g1",     { lane: 0, col: 2,  label: "Peak hours?" }),
-  serviceTask("t1", { lane: 1, col: 3,  label: "Take A's split\n18 · 15 · 12 by node" }),
-  serviceTask("t2", { lane: 2, col: 3,  label: "Minimum green\n7 s" }),
-  serviceTask("t3", { lane: 2, col: 4,  label: "Extend +2 s\nper detection" }),
-  gateway("g2",     { lane: 2, col: 5,  label: "Gap-out?" }),
-  gateway("g3",     { lane: 3, col: 6,  label: "WALK\nrequested?" }),
-  task("t4",        { lane: 3, col: 7,  label: "Green must be\n≥ 12 s" }),
+  serviceTask("t1", { lane: 1, col: 3,  label: "Take A's split\n18 \u00b7 15 \u00b7 12 s\n(ped floor applied)" }),
+  gateway("g3",     { lane: 3, col: 3,  label: "WALK on\nthis phase?" }),
+  task("t4",        { lane: 3, col: 4,  label: "Minimum green\n12 s\n(crossing time)" }),
+  serviceTask("t2", { lane: 2, col: 4,  label: "Minimum green\n7 s" }),
+  serviceTask("t3", { lane: 2, col: 5,  label: "Hold green while\ndetector live" }),
+  gateway("g2",     { lane: 2, col: 6,  label: "End this\ngreen?" }),
+  task("t8",        { lane: 2, col: 7,  label: "Nobody waiting:\nrest on green\n\u2014 no cycle at all" }),
   task("t5",        { lane: 4, col: 8,  label: "GREEN\nphase A" }),
   task("t6",        { lane: 4, col: 9,  label: "YELLOW\n3 s" }),
   task("t7",        { lane: 4, col: 10, label: "ALL-RED\n2 s" }),
-  subProcess("pb",  { lane: 4, col: 11, label: "PHASE B\n15 + 3 + 2 s" }),
+  subProcess("pb",  { lane: 4, col: 11, label: "PHASE B\nsame rules,\nother direction" }),
   gateway("g4",     { lane: 4, col: 12, label: "Continue?" }),
   end("e1",         { lane: 4, col: 13, label: "Mode change" }),
 ]);
 
 renderTree(d, proc, [40, 80]);
-d.title("1/3 · One full cycle — where 40 s comes from");
+d.title("1/3 · One full cycle — how each green's length is decided");
 
 d.link("s1", "tp", "", { flow: true, rounded: true });
 d.link("tp", "g1", "", { flow: true, rounded: true });
 d.link("g1", "t1", "peak", { flow: true, rounded: true });
-d.link("g1", "t2", "off-peak", { flow: true, rounded: true });
-d.link("t1", "g3", "", { flow: true, rounded: true });
+d.link("g1", "g3", "off-peak", { flow: true, rounded: true });
+d.link("g3", "t4", "yes", { rounded: true });
+d.link("g3", "t2", "no", { flow: true, rounded: true });
+d.link("t4", "t3", "", { rounded: true });
 d.link("t2", "t3", "", { flow: true, rounded: true });
 d.link("t3", "g2", "", { flow: true, rounded: true });
-d.link("g2", "t3", "extend", { rounded: true });
-d.link("g2", "g3", "end green — cycle varies 20–50 s", { flow: true, rounded: true });
-d.link("g3", "t4", "yes", { rounded: true });
-d.link("g3", "t5", "no", { flow: true, rounded: true });
-d.link("t4", "t5", "", { flow: true, rounded: true });
+d.link("g2", "t3", "not yet \u2014 keep green", { rounded: true });
+d.link("g2", "t8", "nobody waiting", { rounded: true });
+d.link("t8", "t3", "", { rounded: true });
+d.link("g2", "t5", "gapped & min served \u2014 half-cycle 7 + 3 + 2 s", { flow: true, rounded: true });
+d.link("t1", "t5", "", { flow: true, rounded: true });
 d.link("t5", "t6", "", { flow: true, rounded: true });
 d.link("t6", "t7", "", { flow: true, rounded: true });
 d.link("t7", "pb", "", { flow: true, rounded: true });
