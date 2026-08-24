@@ -46,7 +46,23 @@ d.link("g2", "t7", "reconnected", { flow: true, rounded: true });
 d.link("t7", "t8", "", { flow: true, rounded: true });
 d.link("t8", "e1", "", { flow: true, rounded: true });
 
-writeFileSync(new URL("./3-central-failure.drawio", import.meta.url), d.mxfile("3 · Losing central"));
+
+// Every term and number the figure uses, so it can be read on its own.
+const p = d.rect("deg");
+const legend = [
+  "<b>central owns</b> splits, offsets and the mode schedule. It <i>publishes</i> &#8212; it does not drive lights tick by tick.",
+  "<b>each local owns</b> its own state machine, its own detectors, and the last plan it received.",
+  "<b>link lost</b> &#8594; hold the last known plan, buffer outgoing status on the bus, keep cycling. <b>No blackout, no fallback to flash.</b>",
+  "<b>offsets survive</b>, so the green wave holds while the clocks stay close &#8212; coordination decays, it does not break.",
+  "Every arrow crossing a lane is one of the <b>9 typed messages</b>. Nothing else crosses &#8212; that is what makes the actor split real.",
+].join("<br>");
+d.box("legend", [p.x, p.y + p.h + 26], [p.w, 96], legend,
+      { fill: "#F5F8FB", stroke: "#C4CCD7", va: "middle", fs: 11, ob: false });
+
+const xml = d.mxfile("3 · Losing central").replace(
+  /(<mxCell id="legend"[^>]*style=")([^"]*)"/,
+  (_, a, st) => a + st.replace("whiteSpace=wrap", "whiteSpace=wrap;align=left;spacingLeft=14") + '"');
+writeFileSync(new URL("./3-central-failure.drawio", import.meta.url), xml);
 
 import { execFileSync as __exec } from "node:child_process";
 try {

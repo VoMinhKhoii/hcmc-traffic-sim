@@ -57,7 +57,23 @@ d.link("t7", "t8", "clear", { flow: true, rounded: true });
 d.link("t8", "t10", "", { flow: true, rounded: true });
 d.link("t10", "e1", "", { flow: true, rounded: true });
 
-writeFileSync(new URL("./2-train-preemption.drawio", import.meta.url), d.mxfile("2 · Train preemption"));
+
+// Every term and number the figure uses, so it can be read on its own.
+const p = d.rect("pre");
+const legend = [
+  "<b>pocket</b> &#8212; the queue between the stop line and the tracks; it must be <i>empty</i> before the gates drop. That is the whole safety problem.",
+  "<b>T&#8722;30 s</b> warning &#183; <b>pocket flush 20 s</b> &#183; <b>barrier travel 8 s</b> &#183; <b>proof timeout 10 s</b> &#8212; the flush and the travel both fit inside the warning",
+  "<b>commanded down &#8800; known down.</b> The gate must <i>prove</i> CLOSED. No proof in 10 s and the <b>train</b> is held at the 80 m signal, not the road.",
+  "<b>BROKEN</b> is a BPMN error end &#8212; the only coloured element in any of these three figures. Colour carries meaning here, not emphasis.",
+  "<b>Priority</b> train &gt; emergency vehicle &gt; normal. Preemption outranks the peak plan, the actuated loop and night flash alike.",
+].join("<br>");
+d.box("legend", [p.x, p.y + p.h + 26], [p.w, 108], legend,
+      { fill: "#F5F8FB", stroke: "#C4CCD7", va: "middle", fs: 11, ob: false });
+
+const xml = d.mxfile("2 · Train preemption").replace(
+  /(<mxCell id="legend"[^>]*style=")([^"]*)"/,
+  (_, a, st) => a + st.replace("whiteSpace=wrap", "whiteSpace=wrap;align=left;spacingLeft=14") + '"');
+writeFileSync(new URL("./2-train-preemption.drawio", import.meta.url), xml);
 
 import { execFileSync as __exec } from "node:child_process";
 try {
