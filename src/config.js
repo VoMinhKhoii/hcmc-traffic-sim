@@ -20,7 +20,7 @@ export const CONFIG = {
   // signal timing (derived in TIMINGS.md)
   yellow: 3,            // s — ITE kinematic formula @40km/h
   allRed: 2,            // s — intersection width / speed
-  minGreen: 7,          // s — actuated minimum
+  minGreen: 12,         // s — one floor: never shorter than the time to walk across
   maxGreen: 40,         // s — actuated cap
   gapOut: 3,            // s without detection ends actuated green
   walkMin: 12,          // s — 2x2-lane crossing / 1.2 m/s

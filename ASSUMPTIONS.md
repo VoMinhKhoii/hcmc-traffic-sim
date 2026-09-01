@@ -62,72 +62,83 @@ marked **[port]**; where it exists only because this is a simulator it is marked
 18. **All six intersections share one cycle at peak** (the longest Webster
     cycle), so that offsets produce real green waves. **[port]**
 
+19. **No countdown display is modelled.** Nearly every HCMC intersection carries
+    one; none appears here, and no actor publishes a remaining-time value. This
+    is not cosmetic. A countdown needs the end of the green fixed at the moment
+    it starts, which holds only under a fixed plan: actuated off-peak ends on
+    gap-out, night flash has no green to count, and rail or EV preemption cuts a
+    green mid-phase in any mode. A real deployment either runs fixed-time
+    wherever a display exists, or blanks the display outside fixed operation.
+    Note the awkward corollary: an off-peak congestion alarm puts the node back
+    on a fixed plan, so a display driven by "fixed-time only" would light up for
+    the duration of the alarm and go dark again when it clears. **[sim only]**
+
 ## 4. Railway
 
-19. **The rail line is straight.** It is defined as the line through crossings A
+20. **The rail line is straight.** It is defined as the line through crossings A
     and B; crossing C is derived analytically as where that line meets link
     I1–I6. The real Lê Văn Sỹ alignment is not traced. **[sim only]**
-20. **Trains run at a constant 60 km/h and are 120 m long.**
-21. **Detection is 30 s / 500 m before the crossing.** Assumed detector placement.
+21. **Trains run at a constant 60 km/h and are 120 m long.**
+22. **Detection is 30 s / 500 m before the crossing.** Assumed detector placement.
     **[port]**
-22. **Braking is constant deceleration**, ignoring brake build-up time and
+23. **Braking is constant deceleration**, ignoring brake build-up time and
     driver or ATP reaction time. **[port]**
-23. **Night trains run every night** at 20-minute headway. The brief's
+24. **Night trains run every night** at 20-minute headway. The brief's
     "Friday/Saturday only" detail is treated as a report note, not control logic.
-24. **Only one gate fault is modelled: failure to prove closed.** A barrier stuck
+25. **Only one gate fault is modelled: failure to prove closed.** A barrier stuck
     *down* is the safe failure — road blocked, crossing protected, trains
     unaffected — and is deliberately excluded. **[port]**
-25. **Vehicles already inside a link when it is closed are assumed to clear
+26. **Vehicles already inside a link when it is closed are assumed to clear
     themselves.** **[sim only]**
-26. **Repair is a random human action**, 300–900 s in the demo default. There is
+27. **Repair is a random human action**, 300–900 s in the demo default. There is
     no repair-crew model, no travel time, no partial repair.
-27. **Trains hold 220 m front-to-front separation** (120 m length + 100 m gap).
+28. **Trains hold 220 m front-to-front separation** (120 m length + 100 m gap).
     This is a simple following rule, not a signalling block model. **[port]**
 
 ## 5. Control room
 
-28. **Central never sets a light.** It selects plans and issues overrides; locals
+29. **Central never sets a light.** It selects plans and issues overrides; locals
     always own their own signals. **[port]** — this is the architecture, not a
     simplification, and it is what makes the locals independently deployable.
-29. **Congestion thresholds are chosen, not derived** — 25 vehicles, held for
+30. **Congestion thresholds are chosen, not derived** — 25 vehicles, held for
     20 s, clearing at 15. They are not tied to a service-level target such as a
     maximum acceptable delay. **[port]**
-30. **Split adjustment shifts at most 8 s and never changes the cycle**, so
+31. **Split adjustment shifts at most 8 s and never changes the cycle**, so
     corridor offsets survive. **[port]**
-31. **Metering never cascades.** A node that is already re-timed is not metered
+32. **Metering never cascades.** A node that is already re-timed is not metered
     again, which prevents the whole network freezing itself. **[port]**
-32. **Recovery boost applies only in actuated mode.** Under a fixed plan it is
+33. **Recovery boost applies only in actuated mode.** Under a fixed plan it is
     ignored. Known limitation, not intentional.
 
 ## 6. Failures
 
-33. **Two failure classes are in scope: central link loss and gate fault.** The
+34. **Two failure classes are in scope: central link loss and gate fault.** The
     brief's "railway track broken" is out of scope. **[port]**
-34. **Link failure is all or nothing.** The link is up or down — no partial loss,
+35. **Link failure is all or nothing.** The link is up or down — no partial loss,
     no corruption, no reordering, no duplication. **[sim only]** — a real QNX
     port must decide what `MsgSend` returning an error actually means.
-35. **While the link is up, no message is ever lost**, and buffered messages
+36. **While the link is up, no message is ever lost**, and buffered messages
     flush in order on reconnect. **[sim only]**
 
 ## 7. Priority vehicle
 
-36. **One EV at a time**, travelling at 50 km/h on the traffic side.
-37. **EV arrival times are computed from distances and assumed accurate.** The
+37. **One EV at a time**, travelling at 50 km/h on the traffic side.
+38. **EV arrival times are computed from distances and assumed accurate.** The
     corridor is preset, not routed dynamically, and the ETA does not adapt to
     the congestion the EV actually meets. **[port]**
-38. **A lost `RESUME` is caught by a watchdog** that releases the preemption at
+39. **A lost `RESUME` is caught by a watchdog** that releases the preemption at
     ETA + 90 s. A local controller must never stay preempted forever. **[port]**
 
 ## 8. Architecture and the simulator itself
 
-39. **This simulator proves the message set, not the timing.** All actors run in
+40. **This simulator proves the message set, not the timing.** All actors run in
     one process with cooperative ticking and an in-memory bus. Real QNX
     scheduling, thread priorities, blocking behaviour and context-switch cost
     are **not** modelled. Conclusions of the form "these nine messages are
     sufficient" transfer; conclusions of the form "the deadline is met under
     load" do not. **[sim only — read this one twice]**
-40. **Time is quantised to a 0.1 s tick.** Every duration is a multiple of it.
-41. **Detectors are perfect.** Queue length and gap-out detection are read
+41. **Time is quantised to a 0.1 s tick.** Every duration is a multiple of it.
+42. **Detectors are perfect.** Queue length and gap-out detection are read
     exactly, with no noise, no dropout and no detector failure mode. Real
     inductive loops fail, and a real design should say what happens when one does.
     **[sim only]**
@@ -140,7 +151,7 @@ If you only mention three in the report, mention these:
 
 - **No spillback (#2)** — it is the model's biggest departure from reality and it
   flatters our results.
-- **The simulator proves sufficiency, not schedulability (#39)** — it is the
+- **The simulator proves sufficiency, not schedulability (#40)** — it is the
   boundary of what this evidence can support, and claiming more would be wrong.
-- **Perfect detectors (#41)** — every adaptive decision in the system rests on a
+- **Perfect detectors (#42)** — every adaptive decision in the system rests on a
   sensor reading we never allow to be wrong.

@@ -64,10 +64,22 @@ Verified in scenario 1: measured offset I3→I5 = 38.7 s, shared network cycle.
 
 ## 7. Actuated parameters (off-peak)
 
-min green 7 s (driver expectation + one queued platoon), extension 2 s per
-detection, gap-out 3 s (passage time between advance detector and stop line
-at 40 km/h ≈ 40 m spacing), max green 40 s (bounds cross-street wait).
+min green **12 s**, gap-out 3 s (passage time between advance detector and stop
+line at 40 km/h ≈ 40 m spacing), max green 40 s (bounds cross-street wait).
 Standard NEMA-style vehicle actuation.
+
+**One floor, not two.** The minimum green was 7 s (driver expectation + one
+queued platoon) with a separate 12 s floor applied only to greens carrying a
+WALK. Both are now 12 s, so `max(minGreen, walk ? walkMin : 0)` collapses to a
+constant: green length no longer depends on whether a pedestrian is present, and
+the walk conditional disappears from the timing path entirely. One number
+survives the QNX port instead of two plus a branch.
+
+This is free at peak — the design rule below already floors every split at 12 s,
+`cycleMin` stays 40 s, and the congestion donor floor was already
+`max(7, 12) = 12`, so no split, offset, or re-timing figure moves. The only
+observable change is off-peak greens rising from ~7–10 s to ~12–14 s. Scenario 2
+bounds them: 259 greens all within [12, 40] s.
 
 ## 8. Pedestrian minimum — `walkMin = 12 s`
 

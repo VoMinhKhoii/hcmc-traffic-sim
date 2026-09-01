@@ -194,7 +194,7 @@ map one-to-one onto the rows above.
 Say this out loud in the report. Naming your simplifications is what separates
 an engineering model from a toy, and markers reward it.
 
-**The full list lives in `ASSUMPTIONS.md`** — 41 of them, each marked for whether
+**The full list lives in `ASSUMPTIONS.md`** — 42 of them, each marked for whether
 it carries into the QNX port or exists only in the simulator. Keep that file as
 the single source so the two never drift apart.
 

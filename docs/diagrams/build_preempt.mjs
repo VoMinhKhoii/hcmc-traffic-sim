@@ -78,5 +78,5 @@ writeFileSync(new URL("./2-train-preemption.drawio", import.meta.url), xml);
 import { execFileSync as __exec } from "node:child_process";
 try {
   const __f = new URL("./2-train-preemption.drawio", import.meta.url).pathname;
-  console.log(__exec("drawio-ai", ["render", __f, "--check", "--page", "1", "--scale", "2", "-o", __f + ".png"], { encoding: "utf8" }).trim());
+  console.log(__exec("drawio-ai", ["render", __f, "--check", "--page", "1", "--scale", "2", "-o", __f.replace(/\.drawio$/, ".png")], { encoding: "utf8" }).trim());
 } catch (e) { console.error("RENDER-SKIPPED:", String(e.message).split("\n")[0]); }
